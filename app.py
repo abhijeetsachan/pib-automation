@@ -6,6 +6,17 @@ from pathlib import Path
 import os
 import io
 
+import importlib
+import config
+import pib_scraper
+import upsc_classifier
+import doc_builder
+
+importlib.reload(config)
+importlib.reload(pib_scraper)
+importlib.reload(upsc_classifier)
+importlib.reload(doc_builder)
+
 from config import UPSC_PAPERS, OUTPUT_DIR
 from pib_scraper import PIBScraper
 from upsc_classifier import UPSCClassifier
