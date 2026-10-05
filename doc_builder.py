@@ -1,8 +1,12 @@
-"""Document Generation Engine: Creates formatted Excel (.xlsx) and Word (.docx) files."""
+"""Document Generation Engine: Creates formatted Excel (.xlsx) and Word (.docx) files.
+Includes locked-file collision protection and in-memory byte generation.
+"""
 
 import os
+import io
+import logging
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Tuple
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -14,14 +18,48 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 
 from config import UPSC_PAPERS
 
+logger = logging.getLogger(__name__)
+
 
 class DocumentBuilder:
     @staticmethod
-    def generate_excel(releases: List[Dict], output_filepath: str, formatted_date: str):
-        """Generates a professional multi-sheet Excel file."""
+    def _safe_save_file(save_callback, target_path: str) -> str:
+        """
+        Attempts to save to target_path. If locked by another application (e.g. Word/Excel),
+        falls back to an alternate filename like `filename (1).ext`.
+        """
+        try:
+            save_callback(target_path)
+            return target_path
+        except PermissionError:
+            path_obj = Path(target_path)
+            parent = path_obj.parent
+            stem = path_obj.stem
+            suffix = path_obj.suffix
+
+            for i in range(1, 10):
+                fallback_path = str(parent / f"{stem} ({i}){suffix}")
+                try:
+                    save_callback(fallback_path)
+                    logger.warning(
+                        "Original file '%s' is locked by another program. Saved to '%s' instead.",
+                        target_path,
+                        fallback_path,
+                    )
+                    return fallback_path
+                except PermissionError:
+                    continue
+
+            # If all numbered attempts fail, append timestamp
+            fallback_path = str(parent / f"{stem}_alt{suffix}")
+            save_callback(fallback_path)
+            return fallback_path
+
+    @staticmethod
+    def build_excel_workbook(releases: List[Dict], formatted_date: str) -> openpyxl.Workbook:
+        """Builds and returns the styled openpyxl Workbook in memory."""
         wb = openpyxl.Workbook()
 
-        # Styles
         navy_header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
         header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
         align_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -62,7 +100,6 @@ class DocumentBuilder:
                 item.get("url", "")
             ])
 
-            # Apply cell styles
             paper_color = UPSC_PAPERS.get(paper, {}).get("badge_color", "E2E8F0")
             for col_idx in range(1, 8):
                 cell = ws_relevant.cell(row=row_num, column=col_idx)
@@ -76,7 +113,6 @@ class DocumentBuilder:
 
             row_num += 1
 
-        # Column widths
         widths = {1: 8, 2: 15, 3: 30, 4: 55, 5: 25, 6: 35, 7: 35}
         for col, width in widths.items():
             ws_relevant.column_dimensions[get_column_letter(col)].width = width
@@ -106,15 +142,29 @@ class DocumentBuilder:
         for col, width in {1: 8, 2: 18, 3: 15, 4: 30, 5: 60, 6: 35}.items():
             ws_all.column_dimensions[get_column_letter(col)].width = width
 
-        wb.save(output_filepath)
-        return output_filepath
+        return wb
+
+    @classmethod
+    def generate_excel(cls, releases: List[Dict], output_filepath: str, formatted_date: str) -> str:
+        """Generates and saves Excel workbook to disk with lock detection."""
+        wb = cls.build_excel_workbook(releases, formatted_date)
+        actual_path = cls._safe_save_file(wb.save, output_filepath)
+        return actual_path
+
+    @classmethod
+    def generate_excel_bytes(cls, releases: List[Dict], formatted_date: str) -> bytes:
+        """Generates Excel workbook as in-memory bytes for direct download."""
+        wb = cls.build_excel_workbook(releases, formatted_date)
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
 
     @staticmethod
-    def generate_docx(releases: List[Dict], output_filepath: str, formatted_date: str):
-        """Generates an executive Word document tailored for UPSC civil services preparation."""
+    def build_docx_document(releases: List[Dict], formatted_date: str) -> Document:
+        """Builds and returns the styled Word Document in memory."""
         doc = Document()
 
-        # Margins
         for section in doc.sections:
             section.top_margin = Inches(0.8)
             section.bottom_margin = Inches(0.8)
@@ -129,7 +179,7 @@ class DocumentBuilder:
         r_title.font.name = "Arial"
         r_title.font.size = Pt(20)
         r_title.font.bold = True
-        r_title.font.color.rgb = RGBColor(30, 58, 138)  # Deep Navy
+        r_title.font.color.rgb = RGBColor(30, 58, 138)
 
         # Subtitle
         p_sub = doc.add_paragraph()
@@ -145,7 +195,7 @@ class DocumentBuilder:
         summary_table = doc.add_table(rows=1, cols=1)
         summary_table.alignment = WD_TABLE_ALIGNMENT.CENTER
         cell = summary_table.cell(0, 0)
-        
+
         counts_by_paper = {}
         for r in relevant_items:
             p = r.get("paper", "Other")
@@ -186,7 +236,7 @@ class DocumentBuilder:
             r_h.font.name = "Arial"
             r_h.font.size = Pt(13)
             r_h.font.bold = True
-            r_h.font.color.rgb = RGBColor(37, 99, 235)  # Royal Blue
+            r_h.font.color.rgb = RGBColor(37, 99, 235)
 
             for idx, item in enumerate(items, 1):
                 p_item = doc.add_paragraph()
@@ -223,5 +273,20 @@ class DocumentBuilder:
                 r_url.font.size = Pt(9)
                 r_url.font.color.rgb = RGBColor(2, 132, 199)
 
-        doc.save(output_filepath)
-        return output_filepath
+        return doc
+
+    @classmethod
+    def generate_docx(cls, releases: List[Dict], output_filepath: str, formatted_date: str) -> str:
+        """Generates and saves Word Document to disk with lock detection."""
+        doc = cls.build_docx_document(releases, formatted_date)
+        actual_path = cls._safe_save_file(doc.save, output_filepath)
+        return actual_path
+
+    @classmethod
+    def generate_docx_bytes(cls, releases: List[Dict], formatted_date: str) -> bytes:
+        """Generates Word Document as in-memory bytes for direct download."""
+        doc = cls.build_docx_document(releases, formatted_date)
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()

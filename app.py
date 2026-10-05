@@ -4,6 +4,7 @@ import streamlit as st
 from datetime import date, timedelta
 from pathlib import Path
 import os
+import io
 
 from config import UPSC_PAPERS, OUTPUT_DIR
 from pib_scraper import PIBScraper
@@ -90,8 +91,10 @@ with st.sidebar:
         "• You can also select **yesterday's date** to see a full day's releases."
     )
 
-# Session state initialization
-if "enriched_releases" not in st.session_state or fetch_btn:
+# Determine if we should re-fetch
+should_fetch = fetch_btn or ("enriched_releases" not in st.session_state) or (st.session_state.get("current_date") != selected_date)
+
+if should_fetch:
     with st.spinner(f"Fetching releases from PIB for {selected_date.strftime('%d %B %Y')}..."):
         scraper = PIBScraper()
         releases, formatted_date = scraper.fetch_releases(target_date=selected_date)
@@ -99,23 +102,34 @@ if "enriched_releases" not in st.session_state or fetch_btn:
         classifier = UPSCClassifier()
         enriched = classifier.process_all(releases)
         
-        # Build files
+        # Build in-memory bytes for immediate, locked-file-free downloads
+        docx_bytes = DocumentBuilder.generate_docx_bytes(enriched, formatted_date)
+        excel_bytes = DocumentBuilder.generate_excel_bytes(enriched, formatted_date)
+
+        # Build files on disk
         date_code = selected_date.strftime("%Y-%m-%d")
         excel_path = str(OUTPUT_DIR / f"PIB_UPSC_Daily_{date_code}.xlsx")
         docx_path = str(OUTPUT_DIR / f"PIB_UPSC_Daily_{date_code}.docx")
         
-        DocumentBuilder.generate_excel(enriched, excel_path, formatted_date)
-        DocumentBuilder.generate_docx(enriched, docx_path, formatted_date)
-        
+        try:
+            excel_path = DocumentBuilder.generate_excel(enriched, excel_path, formatted_date)
+            docx_path = DocumentBuilder.generate_docx(enriched, docx_path, formatted_date)
+        except Exception as e:
+            st.warning(f"Note: Could not update local disk file (it may be open in Word/Excel): {e}")
+
         st.session_state["enriched_releases"] = enriched
         st.session_state["formatted_date"] = formatted_date
         st.session_state["excel_path"] = excel_path
         st.session_state["docx_path"] = docx_path
+        st.session_state["docx_bytes"] = docx_bytes
+        st.session_state["excel_bytes"] = excel_bytes
+        st.session_state["current_date"] = selected_date
 
 enriched = st.session_state.get("enriched_releases", [])
 formatted_date = st.session_state.get("formatted_date", selected_date.strftime("%d %B %Y"))
-excel_path = st.session_state.get("excel_path", "")
-docx_path = st.session_state.get("docx_path", "")
+docx_bytes = st.session_state.get("docx_bytes", b"")
+excel_bytes = st.session_state.get("excel_bytes", b"")
+date_code = selected_date.strftime("%Y-%m-%d")
 
 if not enriched:
     st.warning(f"No releases found for {formatted_date}.")
@@ -144,32 +158,30 @@ with col5:
 
 st.markdown("---")
 
-# Download Action Bar
+# Download Action Bar (uses in-memory bytes so it never crashes if local file is open in Word/Excel)
 d_col1, d_col2, d_col3 = st.columns([2, 1, 1])
 with d_col1:
     st.subheader(f"Curated Briefing ({formatted_date})")
 
 with d_col2:
-    if os.path.exists(docx_path):
-        with open(docx_path, "rb") as f:
-            st.download_button(
-                label="📄 Download Word (.docx)",
-                data=f.read(),
-                file_name=Path(docx_path).name,
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                use_container_width=True
-            )
+    if docx_bytes:
+        st.download_button(
+            label="📄 Download Word (.docx)",
+            data=docx_bytes,
+            file_name=f"PIB_UPSC_Daily_{date_code}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True
+        )
 
 with d_col3:
-    if os.path.exists(excel_path):
-        with open(excel_path, "rb") as f:
-            st.download_button(
-                label="📊 Download Excel (.xlsx)",
-                data=f.read(),
-                file_name=Path(excel_path).name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
+    if excel_bytes:
+        st.download_button(
+            label="📊 Download Excel (.xlsx)",
+            data=excel_bytes,
+            file_name=f"PIB_UPSC_Daily_{date_code}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
 # Tabbed view by GS Paper
 tab_all, tab_gs1, tab_gs2, tab_gs3, tab_gs4, tab_audit = st.tabs([
