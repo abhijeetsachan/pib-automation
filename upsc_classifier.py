@@ -1,6 +1,6 @@
 """UPSC Syllabus Classifier & Alignment Engine.
 Categorizes PIB releases into General Studies Papers (GS-1, GS-2, GS-3, GS-4)
-and eliminates ceremonial / administrative noise.
+and eliminates ceremonial, inspirational, social media, and administrative noise.
 """
 
 import re
@@ -17,16 +17,20 @@ class UPSCClassifier:
         self.noise_regexes = [re.compile(p, re.IGNORECASE) for p in NOISE_PATTERNS]
         self.gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
 
-    def is_noise(self, headline: str) -> bool:
-        """Identifies purely ceremonial, sports result, or routine protocol releases."""
+    def is_noise(self, headline: str, combined_text: str = "") -> bool:
+        """
+        Identifies ceremonial, quotes/poems/subhashitam, sports results,
+        condolences, or routine protocol releases.
+        """
+        check_text = f"{headline} {combined_text}".strip()
         for pattern in self.noise_regexes:
-            if pattern.search(headline):
+            if pattern.search(check_text):
                 return True
         return False
 
     def classify_release(self, headline: str, ministry: str, article_snippet: str = "") -> Dict:
         """
-        Classifies a single release into UPSC General Studies papers.
+        Classifies a single release into UPSC General Studies papers using word-boundary matching.
         
         Returns:
             Dict containing:
@@ -37,27 +41,34 @@ class UPSCClassifier:
                 - tags (List[str])
                 - score (int: 1-10)
         """
-        # Step 1: Filter out obvious ceremonial noise
-        if self.is_noise(headline):
+        combined_text = f"{headline} {ministry} {article_snippet}".lower()
+
+        # Step 1: Strict noise filtering (Social media quotes, Subhashitam, Sports, Protocol)
+        if self.is_noise(headline, combined_text):
             return {
                 "is_relevant": False,
                 "paper": "Routine/Ceremonial",
-                "paper_title": "Routine Announcements / Sports / Greetings",
-                "relevance_reason": "Ceremonial announcement, greeting, or sports update with no direct syllabus overlap.",
-                "tags": ["Routine/Protocol"],
+                "paper_title": "Routine Announcements / Quotes / Sports / Protocol",
+                "relevance_reason": "Ceremonial announcement, quote sharing, greeting, or sports update with no direct syllabus overlap.",
+                "tags": ["Filtered Noise"],
                 "score": 1
             }
 
-        combined_text = f"{headline} {ministry} {article_snippet}".lower()
-
-        # Step 2: Match against UPSC taxonomy keywords
+        # Step 2: Strict word-boundary matching against UPSC taxonomy keywords
         paper_matches = {}
         for paper_code, paper_info in UPSC_PAPERS.items():
-            matched_kw = [kw for kw in paper_info["keywords"] if kw in combined_text]
+            matched_kw = []
+            for kw in paper_info["keywords"]:
+                # Use regex \bword\b boundary to prevent partial substring false positives
+                # (e.g. preventing 'ed' matching 'shared' or 'hearted')
+                regex_pattern = r"\b" + re.escape(kw) + r"\b"
+                if re.search(regex_pattern, combined_text, re.IGNORECASE):
+                    matched_kw.append(kw)
+
             if matched_kw:
                 paper_matches[paper_code] = matched_kw
 
-        # If keywords matched across papers, pick the paper with the strongest match count
+        # If keywords matched across papers, pick the paper with the highest match count
         if paper_matches:
             best_paper = max(paper_matches.keys(), key=lambda p: len(paper_matches[p]))
             matched_keywords = paper_matches[best_paper]
@@ -67,35 +78,43 @@ class UPSCClassifier:
                 "is_relevant": True,
                 "paper": best_paper,
                 "paper_title": UPSC_PAPERS[best_paper]["title"],
-                "relevance_reason": f"Aligined with {UPSC_PAPERS[best_paper]['title']} topics: {', '.join(matched_keywords[:3])}",
+                "relevance_reason": f"Aligned with {UPSC_PAPERS[best_paper]['title']} topics: {', '.join(matched_keywords[:3])}",
                 "tags": matched_keywords[:4],
                 "score": relevance_score
             }
 
-        # Step 3: Nodal Strategic Ministries Fallback
-        # If no explicit keyword was found, but release is from a key strategic ministry
-        strategic_ministries = {
-            "ministry of defence": ("GS-3", "Internal & External Security / Defence Capabilities"),
-            "ministry of external affairs": ("GS-2", "Bilateral & Regional International Relations"),
-            "ministry of finance": ("GS-3", "Economic Governance & Fiscal Policy"),
-            "ministry of environment, forest and climate change": ("GS-3", "Ecology, Climate Action & Conservation"),
-            "department of atomic energy": ("GS-3", "Science, Nuclear Energy & Strategic Tech"),
-            "ministry of law and justice": ("GS-2", "Constitutional Provisions & Legal Framework"),
-            "ministry of personnel, public grievances & pensions": ("GS-2", "Administrative Reforms & Governance Quality"),
-            "ministry of science and technology": ("GS-3", "Indigenization of Technology & R&D"),
-        }
+        # Step 3: Nodal Strategic Ministries Policy Fallback
+        # Only if headline contains clear policy/action verbs
+        policy_action_words = [
+            r"\bapproves?\b", r"\blaunches?\b", r"\bpolicy\b", r"\bguidelines?\b",
+            r"\bschemes?\b", r"\bmission\b", r"\breport\b", r"\bindex\b",
+            r"\bagreement\b", r"\binitiative\b", r"\boperations?\b", r"\bmeasures?\b"
+        ]
+        has_policy_action = any(re.search(pat, combined_text) for pat in policy_action_words)
 
-        min_lower = ministry.lower()
-        for strat_min, (paper, subtopic) in strategic_ministries.items():
-            if strat_min in min_lower:
-                return {
-                    "is_relevant": True,
-                    "paper": paper,
-                    "paper_title": UPSC_PAPERS[paper]["title"],
-                    "relevance_reason": f"Strategic policy update from nodal ministry ({ministry}): {subtopic}",
-                    "tags": [subtopic.split("/")[0].strip()],
-                    "score": 6
-                }
+        if has_policy_action:
+            strategic_ministries = {
+                "ministry of defence": ("GS-3", "Internal & External Security / Defence Capabilities"),
+                "ministry of external affairs": ("GS-2", "Bilateral & Regional International Relations"),
+                "ministry of finance": ("GS-3", "Economic Governance & Fiscal Policy"),
+                "ministry of environment, forest and climate change": ("GS-3", "Ecology, Climate Action & Conservation"),
+                "department of atomic energy": ("GS-3", "Science, Nuclear Energy & Strategic Tech"),
+                "ministry of law and justice": ("GS-2", "Constitutional Provisions & Legal Framework"),
+                "ministry of personnel, public grievances & pensions": ("GS-2", "Administrative Reforms & Governance Quality"),
+                "ministry of science and technology": ("GS-3", "Indigenization of Technology & R&D"),
+            }
+
+            min_lower = ministry.lower()
+            for strat_min, (paper, subtopic) in strategic_ministries.items():
+                if strat_min in min_lower:
+                    return {
+                        "is_relevant": True,
+                        "paper": paper,
+                        "paper_title": UPSC_PAPERS[paper]["title"],
+                        "relevance_reason": f"Strategic policy update from nodal ministry ({ministry}): {subtopic}",
+                        "tags": [subtopic.split("/")[0].strip()],
+                        "score": 6
+                    }
 
         # Step 4: General administrative fallback (Non-core)
         return {

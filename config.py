@@ -39,9 +39,9 @@ UPSC_PAPERS = {
         "keywords": [
             "heritage", "monument", "archaeology", "excavation", "craft", "temple",
             "tribal", "folk art", "classical dance", "classical language", "unesco",
-            "freedom struggle", "commemoration", "tribute", "birth anniversary", "death anniversary",
+            "freedom struggle", "geological survey",
             "monsoon", "cyclone", "glacier", "earthquake", "geological", "western ghats",
-            "himalayas", "river basin", "census", "demographic", "urbanization", "folk"
+            "himalayas", "river basin", "census", "demographic", "urbanization", "folk tradition"
         ]
     },
     "GS-2": {
@@ -49,14 +49,15 @@ UPSC_PAPERS = {
         "subtopics": "Governance, Constitution, Polity, Social Justice & International Relations",
         "badge_color": "DBEAFE",  # Soft Blue
         "keywords": [
-            "cabinet approves", "bill", "amendment", "act", "ordinance", "constitution",
+            "cabinet approves", "bill", "amendment", "ordinance", "constitution",
             "fundamental rights", "judiciary", "high court", "supreme court", "election commission",
-            "parliament", "lok sabha", "rajya sabha", "statutory", "quasi-judicial", "tribunal",
-            "governance", "transparency", "e-governance", "citizen charter", "civil service",
-            "welfare scheme", "vulnerable sections", "sc/st", "minorities", "women empowerment",
-            "health policy", "education policy", "nep", "ayushman bharat", "poverty", "malnutrition",
-            "treaty", "mou", "bilateral", "summit", "g20", "asean", "quad", "brics", "sco",
-            "unsc", "wto", "who", "extradition", "diplomatic", "external affairs"
+            "parliament", "lok sabha", "rajya sabha", "statutory body", "quasi-judicial", "tribunal",
+            "governance", "transparency", "e-governance", "citizen charter", "civil services",
+            "welfare scheme", "vulnerable sections", "scheduled castes", "scheduled tribes", "women empowerment",
+            "national health policy", "ayushman bharat", "national education policy", "poverty alleviation", "malnutrition",
+            "bilateral treaty", "mou signed", "bilateral relations", "international summit",
+            "g20", "asean", "quad", "brics", "shanghai cooperation", "unsc", "wto", "extradition",
+            "ministry of external affairs", "foreign policy"
         ]
     },
     "GS-3": {
@@ -64,21 +65,21 @@ UPSC_PAPERS = {
         "subtopics": "Economy, Agriculture, Science & Tech, Environment & Internal Security",
         "badge_color": "DCFCE7",  # Soft Green
         "keywords": [
-            "economy", "gdp", "growth", "inflation", "cpi", "wpi", "rbi", "monetary policy",
-            "fiscal", "budget", "direct tax", "indirect tax", "gst", "customs", "export", "import",
-            "msme", "industrial", "infrastructure", "railways", "national highway", "port",
-            "sagarmala", "bharatmala", "aviation", "logistics", "fdi", "investment",
-            "agriculture", "farmer", "crop", "msp", "procurement", "pm-kisan", "irrigation",
-            "fertilizer", "organic farming", "food processing", "animal husbandry", "fisheries",
-            "science and technology", "isro", "space", "drdo", "defence manufacturing", "missile",
-            "satellite", "atomic energy", "nuclear", "ai", "artificial intelligence", "semiconductor",
-            "quantum", "biotechnology", "supercomputer", "cyber", "cybersecurity",
-            "environment", "climate change", "cop", "renewable energy", "solar", "green hydrogen",
-            "biodiversity", "wildlife", "forest", "sanctuary", "national park", "tiger reserve",
-            "iucn", "great indian bustard", "pollution", "air quality", "caqm", "water conservation",
+            "economy", "gdp", "economic growth", "inflation", "cpi", "wpi", "reserve bank", "monetary policy",
+            "fiscal deficit", "union budget", "direct tax", "indirect tax", "gst", "customs duty", "export promotion", "import substitution",
+            "msme", "industrial corridor", "infrastructure", "railways network", "national highway", "inland waterway", "port modern",
+            "sagarmala", "bharatmala", "aviation sector", "logistics policy", "foreign direct investment",
+            "agriculture", "farmer", "crop production", "minimum support price", "procurement", "pm-kisan", "micro irrigation",
+            "fertilizer subsidy", "organic farming", "food processing", "animal husbandry", "fisheries sector",
+            "science and technology", "isro", "space exploration", "drdo", "defence manufacturing", "missile system",
+            "satellite launch", "atomic energy", "nuclear reactor", "uranium", "artificial intelligence", "semiconductor mission",
+            "quantum mission", "biotechnology", "supercomputer", "cybersecurity",
+            "environment conservation", "climate change", "renewable energy", "solar energy", "green hydrogen",
+            "biodiversity", "wildlife sanctuary", "forest cover", "national park", "tiger reserve", "endangered species",
+            "great indian bustard", "pollution control", "air quality", "caqm", "water conservation",
             "disaster management", "ndrf", "ndma",
-            "internal security", "border management", "dri", "narcotics", "smuggling",
-            "money laundering", "ed", "nia", "cbi", "coastal security"
+            "internal security", "border management", "narcotics control", "illicit drug trafficking",
+            "money laundering", "enforcement directorate", "national investigation agency", "coastal security"
         ]
     },
     "GS-4": {
@@ -86,18 +87,41 @@ UPSC_PAPERS = {
         "subtopics": "Ethics, Integrity, Probity & Administrative Reforms",
         "badge_color": "F3E8FF",  # Soft Purple
         "keywords": [
-            "ethics", "integrity", "probity", "vigilance", "anti-corruption", "cvc",
-            "transparency", "accountability", "whistleblower", "code of conduct",
-            "public service values", "compassion", "empathy in governance", "moral"
+            "ethics in governance", "integrity pact", "probity in public life", "vigilance awareness",
+            "central vigilance commission", "anti-corruption", "whistleblower protection", "code of conduct",
+            "public service values", "compassion in administration", "transparency in governance"
         ]
     }
 }
 
-# Negative noise patterns (routine ceremonies, sports congratulations, condolence messages)
+# Negative noise patterns (routine ceremonies, quotes, poems, sports, condolences, protocol)
 NOISE_PATTERNS = [
-    r"\bgreets\b", r"\bgreetings\b", r"\bcondoles\b", r"\bpasses away\b",
-    r"\bcongratulates\b", r"\bcongratulated\b", r"\bwon silver\b", r"\bwon gold\b",
-    r"\bwon bronze\b", r"\bcongratulated on winning\b", r"\bannual day celebration\b",
-    r"\bbook launch\b", r"\bwishes on\b", r"\bwishing on\b", r"\bcondolences\b",
-    r"\binaugurates exhibition\b", r"\battends dinner\b", r"\bwelcomes\b"
+    r"\bsubhashitam\b",
+    r"\bshares\s+(?:sanskrit\s+)?(?:subhashitam|shloka|quote|poem|glimpses|pictures|video|thoughts|reflections|post)\b",
+    r"\bshares\s+a\s+(?:poem|quote|message|glimpse)\b",
+    r"\binspiring\s+thoughts\b",
+    r"\bgreets\b",
+    r"\bgreetings\b",
+    r"\bwishes\s+(?:on|the\s+people)\b",
+    r"\bcongratulates\b",
+    r"\bcongratulated\b",
+    r"\bcongratulated\s+on\s+winning\b",
+    r"\bwon\s+(?:gold|silver|bronze|medal|match|tournament|championship|trophy)\b",
+    r"\basian\s+games\b",
+    r"\bolympics\b",
+    r"\bcondoles\b",
+    r"\bcondolences\b",
+    r"\bpasses\s+away\b",
+    r"\bexpresses\s+(?:grief|sorrow|sadness)\b",
+    r"\bmourns\s+the\s+(?:demise|passing|loss)\b",
+    r"\bpays\s+(?:floral\s+)?tributes?\b",
+    r"\bpays\s+homage\s+to\s+freedom\s+fighter\b",
+    r"\bpays\s+homage\b",
+    r"\bcalls\s+on\b",
+    r"\bcalls\s+upon\b",
+    r"\bannual\s+day\s+celebration\b",
+    r"\bbook\s+launch\b",
+    r"\binaugurates\s+exhibition\b",
+    r"\battends\s+dinner\b",
+    r"\bwelcomes\b"
 ]
