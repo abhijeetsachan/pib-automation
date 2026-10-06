@@ -9,6 +9,14 @@ from email.mime.base import MIMEBase
 from email import encoders
 from datetime import date
 
+# Ensure safe console output encoding on Windows
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Force IPv4 socket resolution to prevent dropped connections on Azure/GitHub Actions runners
 _orig_getaddrinfo = socket.getaddrinfo
 def _getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
@@ -75,7 +83,7 @@ def send_daily_brief_email(target_date: str = None, to_override: str = None):
     <html>
       <body style="font-family: Arial, sans-serif; color: #1E293B; line-height: 1.6; padding: 10px;">
         <div style="background-color: #1E3A8A; color: white; padding: 16px 20px; border-radius: 8px 8px 0 0;">
-          <h2 style="margin: 0;">🇮🇳 PIB Daily UPSC Intelligence</h2>
+          <h2 style="margin: 0;">🇮🇳 PIB Daily UPSC Sorting</h2>
           <p style="margin: 4px 0 0 0; font-size: 14px; opacity: 0.9;">Date: {date_str} | Civil Services Examination (GS 1-4)</p>
         </div>
         <div style="border: 1px solid #E2E8F0; border-top: none; padding: 20px; border-radius: 0 0 8px 8px; background: #FFFFFF;">
@@ -90,7 +98,7 @@ def send_daily_brief_email(target_date: str = None, to_override: str = None):
             </ul>
           </div>
           
-          <p style="color: #64748B; font-size: 13px;">This is an automated dispatch from your PIB UPSC GitHub Automation runner.</p>
+          <p style="color: #64748B; font-size: 13px;">This is an automated dispatch from PIB UPSC GitHub Automation runner by Abhijeet</p>
         </div>
       </body>
     </html>
@@ -133,10 +141,11 @@ def send_daily_brief_email(target_date: str = None, to_override: str = None):
 
             # Clean password of any spaces
             clean_pass = mail_pass.replace(" ", "")
+            server.login(mail_user, clean_pass)
             recipients = [r.strip() for r in mail_to.split(",") if r.strip()]
             server.send_message(msg, to_addrs=recipients)
             server.quit()
-            print(f"[✓] Email successfully delivered to {len(recipients)} recipient(s): {', '.join(recipients)} via port {port}!")
+            print(f"[OK] Email successfully delivered to {len(recipients)} recipient(s): {', '.join(recipients)} via port {port}!")
             sent_successfully = True
             break
         except Exception as err:
