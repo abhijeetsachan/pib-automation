@@ -21,20 +21,34 @@ BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "output"
 
 
-def send_daily_brief_email(target_date: str = None):
+def load_env_file():
+    """Loads environment variables from .env file if it exists."""
+    env_file = BASE_DIR / ".env"
+    if env_file.exists():
+        with open(env_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, val = line.split("=", 1)
+                    key = key.strip()
+                    val = val.strip().strip("'\"")
+                    if key not in os.environ:
+                        os.environ[key] = val
+
+def send_daily_brief_email(target_date: str = None, to_override: str = None):
     """
-    Sends today's generated Word (.docx) and Excel (.xlsx) files to the specified recipient.
-    Reads credentials from environment variables:
-      - MAIL_USERNAME: sender email (e.g. your_email@gmail.com)
-      - MAIL_PASSWORD: Gmail App Password (16 characters)
-      - MAIL_TO: recipient email (defaults to MAIL_USERNAME if not provided)
+    Sends today's generated Word (.docx) and Excel (.xlsx) files to one or multiple recipients.
+    Recipients can be comma-separated: 'user1@gmail.com, user2@gmail.com'.
     """
+    load_env_file()
+
     mail_user = os.environ.get("MAIL_USERNAME", "").strip()
     mail_pass = os.environ.get("MAIL_PASSWORD", "").strip()
-    mail_to = os.environ.get("MAIL_TO", mail_user).strip()
+    mail_to = (to_override or os.environ.get("MAIL_TO", mail_user)).strip()
 
     if not mail_user or not mail_pass:
-        print("[!] Email credentials (MAIL_USERNAME / MAIL_PASSWORD) not configured. Skipping email.")
+        print("[!] Email credentials (MAIL_USERNAME / MAIL_PASSWORD) not configured.")
+        print("    Configure them in your .env file or environment variables.")
         return False
 
     date_str = target_date if target_date else date.today().strftime("%Y-%m-%d")
@@ -119,10 +133,10 @@ def send_daily_brief_email(target_date: str = None):
 
             # Clean password of any spaces
             clean_pass = mail_pass.replace(" ", "")
-            server.login(mail_user, clean_pass)
-            server.send_message(msg)
+            recipients = [r.strip() for r in mail_to.split(",") if r.strip()]
+            server.send_message(msg, to_addrs=recipients)
             server.quit()
-            print(f"[✓] Email successfully delivered to {mail_to} via port {port}!")
+            print(f"[✓] Email successfully delivered to {len(recipients)} recipient(s): {', '.join(recipients)} via port {port}!")
             sent_successfully = True
             break
         except Exception as err:
@@ -137,5 +151,9 @@ def send_daily_brief_email(target_date: str = None):
 
 
 if __name__ == "__main__":
-    target = sys.argv[1] if len(sys.argv) > 1 else None
-    send_daily_brief_email(target_date=target)
+    import argparse
+    parser = argparse.ArgumentParser(description="PIB UPSC Email Dispatcher")
+    parser.add_argument("--date", type=str, help="Target date YYYY-MM-DD")
+    parser.add_argument("--to", type=str, help="Recipient email address(es), comma-separated")
+    args = parser.parse_args()
+    send_daily_brief_email(target_date=args.date, to_override=args.to)
