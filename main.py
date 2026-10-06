@@ -83,7 +83,19 @@ def install_windows_task(run_time: str = "21:00"):
     print(f"Creating Windows Scheduled Task: '{task_name}' at {run_time} daily...")
     res = subprocess.run(schtasks_cmd, capture_output=True, text=True)
     if res.returncode == 0:
+        # Configure battery and wake settings using PowerShell
+        ps_config = (
+            f'$t = Get-ScheduledTask -TaskName "{task_name}"; '
+            '$s = $t.Settings; '
+            '$s.DisallowStartIfOnBatteries = $false; '
+            '$s.StopIfGoingOnBatteries = $false; '
+            '$s.StartWhenAvailable = $true; '
+            '$s.WakeToRun = $true; '
+            f'Set-ScheduledTask -TaskName "{task_name}" -Settings $s'
+        )
+        subprocess.run(["powershell", "-Command", ps_config], capture_output=True)
         print(f"[✓] Task successfully created! It will run automatically every day at {run_time}.")
+        print("[✓] Configured: Runs on battery, wakes from sleep, and catches up if PC was off.")
     else:
         print(f"[!] Error creating scheduled task: {res.stderr}")
 
