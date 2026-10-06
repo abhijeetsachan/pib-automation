@@ -91,18 +91,43 @@ def send_daily_brief_email(target_date: str = None):
             except Exception as e:
                 print(f"[!] Error attaching {filepath.name}: {e}")
 
-    # Dispatch via Gmail SMTP
-    try:
-        print(f"[*] Connecting to SMTP server to dispatch email to {mail_to}...")
-        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
-        server.login(mail_user, mail_pass)
-        server.send_message(msg)
-        server.quit()
-        print(f"[✓] Email successfully sent to {mail_to}!")
-        return True
-    except Exception as err:
-        print(f"[!] Failed to send email: {err}")
-        return False
+    # Dispatch via Gmail SMTP (Port 587 STARTTLS is universally allowed on cloud runners)
+    ports_to_try = [
+        (587, False),  # Port 587 with STARTTLS (Primary for cloud VMs)
+        (465, True)    # Port 465 with direct SSL (Fallback)
+    ]
+    
+    sent_successfully = False
+    last_error = None
+
+    for port, use_ssl in ports_to_try:
+        try:
+            print(f"[*] Connecting to smtp.gmail.com on port {port} (SSL={use_ssl}) to send to {mail_to}...")
+            if use_ssl:
+                server = smtplib.SMTP_SSL("smtp.gmail.com", port, timeout=25)
+            else:
+                server = smtplib.SMTP("smtp.gmail.com", port, timeout=25)
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+
+            # Clean password of any spaces
+            clean_pass = mail_pass.replace(" ", "")
+            server.login(mail_user, clean_pass)
+            server.send_message(msg)
+            server.quit()
+            print(f"[✓] Email successfully delivered to {mail_to} via port {port}!")
+            sent_successfully = True
+            break
+        except Exception as err:
+            last_error = err
+            print(f"[!] Attempt on port {port} failed: {err}")
+
+    if not sent_successfully:
+        print(f"[X] Could not send email via any port. Last error: {last_error}")
+        sys.exit(1)
+
+    return True
 
 
 if __name__ == "__main__":
