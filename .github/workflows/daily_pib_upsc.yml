@@ -12,6 +12,8 @@ permissions:
 jobs:
   run-pib-automation:
     runs-on: ubuntu-latest
+    env:
+      TZ: 'Asia/Kolkata'
 
     steps:
       - name: Checkout Code Repository
@@ -43,7 +45,7 @@ jobs:
         run: |
           git config --global user.name "PIB Automation Bot"
           git config --global user.email "bot@pib-upsc.internal"
-          git add output/
+          git add -A output/
           if git diff --staged --quiet; then
             echo "No new files to commit."
           else
