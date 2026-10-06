@@ -1,14 +1,20 @@
-"""Email Dispatcher: Sends generated daily PIB UPSC brief (.docx and .xlsx) via SMTP."""
-
 import os
 import sys
 import smtplib
+import socket
 from pathlib import Path
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 from datetime import date
+
+# Force IPv4 socket resolution to prevent dropped connections on Azure/GitHub Actions runners
+_orig_getaddrinfo = socket.getaddrinfo
+def _getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
+    res = _orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+    return res if res else _orig_getaddrinfo(host, port, family, type, proto, flags)
+socket.getaddrinfo = _getaddrinfo_ipv4
 
 # Ensure paths
 BASE_DIR = Path(__file__).resolve().parent
