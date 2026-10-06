@@ -45,12 +45,27 @@ jobs:
           retention-days: 30
 
       - name: Dispatch Email to Recipient
+        if: ${{ env.MAIL_USERNAME != '' && env.MAIL_PASSWORD != '' }}
         env:
           MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
           MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
-          MAIL_TO: ${{ secrets.MAIL_TO }}
-        run: |
-          python send_email.py
+        uses: dawidd6/action-send-mail@v4
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: 🇮🇳 PIB UPSC Daily Compilation
+          to: ${{ secrets.MAIL_TO }}
+          from: PIB UPSC Automation <${{ secrets.MAIL_USERNAME }}>
+          html_body: |
+            <div style="font-family: Arial, sans-serif; padding: 15px;">
+              <h2 style="color: #1E3A8A;">🇮🇳 PIB Daily UPSC Intelligence</h2>
+              <p>Your automated daily PIB briefing has been compiled and aligned with the UPSC syllabus.</p>
+              <p>Please find attached today's <b>Word Brief (.docx)</b> and <b>Excel Tracker (.xlsx)</b> files.</p>
+            </div>
+          attachments: output/*.*
 
       - name: Commit and Push Daily Archive
         run: |
