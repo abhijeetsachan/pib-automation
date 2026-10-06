@@ -15,6 +15,8 @@ from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.oxml import parse_xml
+from docx.opc.constants import RELATIONSHIP_TYPE
 
 from config import UPSC_PAPERS
 
@@ -22,6 +24,37 @@ logger = logging.getLogger(__name__)
 
 
 class DocumentBuilder:
+    @staticmethod
+    def _add_hyperlink(paragraph, url: str, text: str, color_hex: str = "0284C7", font_size_pt: float = 9.0):
+        """Adds a genuine, clickable OpenXML hyperlink to a Word paragraph."""
+        if not url:
+            return
+        try:
+            part = paragraph.part
+            r_id = part.relate_to(url, RELATIONSHIP_TYPE.HYPERLINK, is_external=True)
+            sz_val = str(int(font_size_pt * 2))
+            clean_text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+            hyperlink_xml = (
+                f'<w:hyperlink xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+                f'r:id="{r_id}" '
+                f'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+                f'<w:r>'
+                f'<w:rPr>'
+                f'<w:color w:val="{color_hex}"/>'
+                f'<w:u w:val="single"/>'
+                f'<w:sz w:val="{sz_val}"/>'
+                f'</w:rPr>'
+                f'<w:t>{clean_text}</w:t>'
+                f'</w:r>'
+                f'</w:hyperlink>'
+            )
+            paragraph._p.append(parse_xml(hyperlink_xml))
+        except Exception as e:
+            logger.warning(f"Failed to add OpenXML hyperlink: {e}. Falling back to styled run.")
+            r = paragraph.add_run(text)
+            r.font.size = Pt(font_size_pt)
+            r.font.color.rgb = RGBColor(2, 132, 199)
+            r.font.underline = True
     @staticmethod
     def _safe_save_file(save_callback, target_path: str) -> str:
         """
@@ -110,6 +143,7 @@ class DocumentBuilder:
                     cell.font = Font(name="Calibri", bold=True)
                 if col_idx == 7 and item.get("url"):
                     cell.font = Font(name="Calibri", color="2563EB", underline="single")
+                    cell.hyperlink = item.get("url")
 
             row_num += 1
 
@@ -138,6 +172,10 @@ class DocumentBuilder:
                 item.get("headline", ""),
                 item.get("url", "")
             ])
+            if item.get("url"):
+                cell_url = ws_all.cell(row=idx + 1, column=6)
+                cell_url.font = Font(name="Calibri", color="2563EB", underline="single")
+                cell_url.hyperlink = item.get("url")
 
         for col, width in {1: 8, 2: 18, 3: 15, 4: 30, 5: 60, 6: 35}.items():
             ws_all.column_dimensions[get_column_letter(col)].width = width
@@ -160,8 +198,8 @@ class DocumentBuilder:
         buffer.seek(0)
         return buffer.getvalue()
 
-    @staticmethod
-    def build_docx_document(releases: List[Dict], formatted_date: str) -> Document:
+    @classmethod
+    def build_docx_document(cls, releases: List[Dict], formatted_date: str) -> Document:
         """Builds and returns the styled Word Document in memory."""
         doc = Document()
 
@@ -268,10 +306,14 @@ class DocumentBuilder:
                 r_rel.font.bold = True
                 r_rel.font.color.rgb = RGBColor(30, 64, 175)
 
-                # Link
-                r_url = p_meta.add_run(f"Official PIB Link: {item['url']}\n")
-                r_url.font.size = Pt(9)
-                r_url.font.color.rgb = RGBColor(2, 132, 199)
+                # Clickable Official PIB Link
+                r_lbl = p_meta.add_run("Official PIB Link: ")
+                r_lbl.font.size = Pt(9)
+                r_lbl.font.bold = True
+                r_lbl.font.color.rgb = RGBColor(71, 85, 105)
+
+                cls._add_hyperlink(p_meta, item.get('url', ''), item.get('url', ''), color_hex="0284C7", font_size_pt=9.0)
+                p_meta.add_run("\n")
 
         return doc
 
