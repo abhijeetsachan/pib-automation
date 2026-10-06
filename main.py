@@ -123,6 +123,7 @@ def main():
     parser.add_argument("--open", action="store_true", help="Automatically open generated DOCX on completion")
     parser.add_argument("--install-task", type=str, nargs="?", const="21:00", help="Install Windows Scheduled Task (default 21:00)")
     parser.add_argument("--daemon", type=str, nargs="?", const="21:00", help="Run local scheduler loop at time HH:MM")
+    parser.add_argument("--email", action="store_true", help="Dispatch generated files via email")
 
     args = parser.parse_args()
 
@@ -142,7 +143,12 @@ def main():
             print("[!] Invalid date format. Use YYYY-MM-DD (e.g. 2026-10-04).")
             return
     
-    run_pipeline(target_date=target, open_files=args.open)
+    excel_path, docx_path = run_pipeline(target_date=target, open_files=args.open)
+
+    if args.email and (excel_path or docx_path):
+        from send_email import send_daily_brief_email
+        target_str = target.strftime("%Y-%m-%d") if target else None
+        send_daily_brief_email(target_date=target_str)
 
 
 if __name__ == "__main__":

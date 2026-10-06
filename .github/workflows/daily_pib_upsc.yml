@@ -44,6 +44,14 @@ jobs:
           path: output/*.*
           retention-days: 30
 
+      - name: Dispatch Email to Recipient
+        env:
+          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+        run: |
+          python send_email.py
+
       - name: Commit and Push Daily Archive
         run: |
           git config --global user.name "PIB Automation Bot"
