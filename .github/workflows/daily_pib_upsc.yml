@@ -2,10 +2,7 @@ name: Daily PIB UPSC Brief Automation
 
 on:
   schedule:
-    # Runs twice daily:
-    # 02:30 UTC = 08:00 AM IST (Morning bulletin)
-    # 15:30 UTC = 09:00 PM IST (Evening comprehensive bulletin)
-    - cron: '30 2 * * *'
+    # Runs daily at 15:30 UTC = 09:00 PM IST (Evening comprehensive bulletin)
     - cron: '30 15 * * *'
   workflow_dispatch: # Allows manual trigger from GitHub web interface anytime
 

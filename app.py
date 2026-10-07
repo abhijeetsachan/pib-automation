@@ -310,8 +310,7 @@ with st.sidebar:
     st.markdown("""
     <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:12px; font-size:0.83rem; line-height:1.5;">
         <div style="font-weight:700; color:#1E3A8A; margin-bottom:4px;">⏱️ Daily Automation Timetable:</div>
-        <div>• <b>8:00 AM IST</b>: Overnight & Morning Releases</div>
-        <div>• <b>9:00 PM IST</b>: Full Comprehensive Daily Brief</div>
+        <div>• <b>9:00 PM IST</b>: Full Comprehensive Daily Brief & Email Dispatch</div>
         <div style="margin-top:6px; color:#059669; font-weight:600;">✓ Active on GitHub Actions & Windows Task Scheduler</div>
     </div>
     """, unsafe_allow_html=True)
