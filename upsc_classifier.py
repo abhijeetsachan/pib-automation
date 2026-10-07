@@ -20,11 +20,12 @@ class UPSCClassifier:
     def is_noise(self, headline: str, combined_text: str = "") -> bool:
         """
         Identifies ceremonial, quotes/poems/subhashitam, sports results,
-        condolences, or routine protocol releases.
+        condolences, routine protocol releases, or generic stub headlines.
         """
+        hl_clean = headline.strip()
         check_text = f"{headline} {combined_text}".strip()
         for pattern in self.noise_regexes:
-            if pattern.search(check_text):
+            if pattern.search(hl_clean) or pattern.search(check_text):
                 return True
         return False
 
@@ -84,16 +85,13 @@ class UPSCClassifier:
             }
 
         # Step 3: Nodal Strategic Ministries Policy Fallback
-        # Expanded to capture appointments, military exercises, and scientific discoveries
+        # Captures policy actions, military exercises/commissioning, and scientific discoveries
         policy_action_words = [
             # Policy, reform & governance initiatives
             r"\bapproves?\b", r"\blaunches?\b", r"\bpolicy\b", r"\bguidelines?\b",
             r"\bschemes?\b", r"\bmission\b", r"\breport\b", r"\bindex\b",
             r"\bagreement\b", r"\binitiative\b", r"\boperations?\b", r"\bmeasures?\b",
-            # Institutional & High-Level Appointments
-            r"\bappoints?\b", r"\bappointed\b", r"\bappointment\b", r"\bassumes?\s+charge\b",
-            r"\btakes?\s+over\b", r"\belevation\b",
-            # Military, Maritime & Security Operations / Exercises
+            # Military, Maritime & Security Operations / Exercises / Commissioning
             r"\bexercises?\b", r"\bcommissions?\b", r"\bflagged?\s+off\b", r"\binducts?\b",
             r"\bdrills?\b", r"\bdeployment\b", r"\binaugurates?\b", r"\bparticipates?\b",
             # Scientific discoveries, R&D & breakthroughs
@@ -140,8 +138,13 @@ class UPSCClassifier:
         }
 
     def process_all(self, releases: List[Dict]) -> List[Dict]:
-        """Processes and enriches a list of releases with UPSC classification metadata."""
+        """
+        Processes, enriches, and deduplicates releases.
+        Eliminates duplicate entries across Cabinet and Line Ministries.
+        """
         enriched = []
+        seen_normalized_headlines = {}
+
         for item in releases:
             classification = self.classify_release(
                 headline=item.get("headline", ""),
@@ -149,5 +152,26 @@ class UPSCClassifier:
                 article_snippet=""
             )
             enriched_item = {**item, **classification}
+
+            # Pillar 1: Deduplication of relevant releases
+            if enriched_item.get("is_relevant"):
+                raw_hl = item.get("headline", "")
+                norm_hl = re.sub(r"[^a-zA-Z0-9]", "", raw_hl.lower())
+
+                if norm_hl in seen_normalized_headlines:
+                    prev_item = seen_normalized_headlines[norm_hl]
+                    # If current item is from Cabinet, prioritize Cabinet over Line Ministry
+                    if "cabinet" in item.get("ministry", "").lower() and "cabinet" not in prev_item.get("ministry", "").lower():
+                        prev_item["is_relevant"] = False
+                        prev_item["paper"] = "Routine/Duplicate"
+                        prev_item["relevance_reason"] = f"Duplicate multi-ministry entry (superseded by Cabinet release PRID: {item.get('prid')})."
+                        seen_normalized_headlines[norm_hl] = enriched_item
+                    else:
+                        enriched_item["is_relevant"] = False
+                        enriched_item["paper"] = "Routine/Duplicate"
+                        enriched_item["relevance_reason"] = f"Duplicate multi-ministry entry (already captured under {prev_item.get('ministry')}, PRID: {prev_item.get('prid')})."
+                else:
+                    seen_normalized_headlines[norm_hl] = enriched_item
+
             enriched.append(enriched_item)
         return enriched

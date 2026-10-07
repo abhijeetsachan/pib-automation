@@ -90,13 +90,12 @@ UPSC_PAPERS = {
             "disaster management", "ndrf", "ndma",
             "internal security", "border management", "narcotics control", "illicit drug trafficking",
             "money laundering", "enforcement directorate", "national investigation agency", "coastal security",
-            "chief of the air staff", "chief of air staff", "chief of army staff", "chief of naval staff",
-            "chief of defence staff", "cds", "air marshal", "general", "admiral",
-            "indian air force", "indian navy", "indian army", "armed forces", "armed forces tribunal",
+            "chief of defence staff", "cds", "theatre command", "tri-service", "armed forces", "armed forces tribunal",
+            "indian air force", "indian navy", "indian army",
             "sarex", "search and rescue", "military exercise", "joint military exercise", "naval exercise",
             "bilateral exercise", "indian coast guard", "coast guard", "maritime security", "anti-piracy",
             "air defence", "indigenous warship", "aircraft carrier", "patrol vessel", "border roads organisation",
-            "bro", "tejas", "ins", "iaf", "tri-service", "theatre command"
+            "bro", "tejas", "ins", "iaf"
         ]
     },
     "GS-4": {
@@ -140,5 +139,24 @@ NOISE_PATTERNS = [
     r"\bbook\s+launch\b",
     r"\binaugurates\s+exhibition\b",
     r"\battends\s+dinner\b",
-    r"\bwelcomes\b"
+    r"\bwelcomes\b",
+    # Media amplifications, Third-party Op-Eds & Charity Auctions
+    r"\bshares\s+(?:an?\s+)?article\b",
+    r"\bpm\s+mementos\b",
+    r"\be-auction\s+of\s+mementos\b",
+    r"\bclarifies\s+protocol\b",
+    r"^press\s+release$",
+    r"\bstrong\s+democracies\s+are\s+built\b",
+    # Bureaucratic Internal Monitoring, Review Meetings & Retreats
+    r"\bchairs\s+review\s+meeting\b",
+    r"\bholds\s+review\s+meeting\b",
+    r"\breview\s+meeting\s+on\s+progress\b",
+    r"\bchintan\s+shivir\b",
+    r"\bbrainstorming\s+session\b",
+    # Routine Commercial Procurement Contracts (Transactional notices)
+    r"\bsigns\s+rs\.?\s*\d+\s+crore\b",
+    r"\bsigns\s+.*?contract\s+to\s+procure\b",
+    # Individual Personnel Appointments (Service Chiefs / Bureaucrats)
+    r"\bgovernment\s+appoints\s+(?:air\s+marshal|lieutenant\s+general|vice\s+admiral)\b",
+    r"\bappoints\s+.*?as\s+chief\s+of\s+(?:the\s+)?(?:air|army|naval)\s+staff\b"
 ]
