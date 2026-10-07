@@ -5,7 +5,7 @@ import sys
 import os
 import subprocess
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 
 # Reconfigure stdout for Windows terminal Unicode compatibility
@@ -30,9 +30,22 @@ def run_pipeline(target_date: date = None, open_files: bool = False):
     scraper = PIBScraper()
     releases, formatted_date = scraper.fetch_releases(target_date=target)
     
+    # Smart Morning Fallback:
+    # If checking today's releases and none are published yet (common before 11:00 AM IST),
+    # automatically fallback to yesterday's complete daily bulletin.
+    is_fallback = False
+    if not releases and target == date.today():
+        yesterday = target - timedelta(days=1)
+        print(f"[!] No releases found for today ({formatted_date}) yet.")
+        print(f"[*] Activating Smart Morning Fallback -> Compiling complete yesterday's bulletin ({yesterday.strftime('%d %B %Y')})...")
+        target = yesterday
+        date_code = target.strftime("%Y-%m-%d")
+        releases, formatted_date = scraper.fetch_releases(target_date=target)
+        is_fallback = True
+
     if not releases:
-        print(f"[!] No releases found for {formatted_date}. (Note: Morning runs before 11:00 AM may have few or no releases yet.)")
-        return None, None
+        print(f"[!] No releases found for {formatted_date}.")
+        return None, None, None
 
     # 2. Classify
     classifier = UPSCClassifier()
@@ -40,6 +53,8 @@ def run_pipeline(target_date: date = None, open_files: bool = False):
     
     relevant_count = sum(1 for r in enriched if r.get("is_relevant"))
     print(f"[+] Total Releases: {len(enriched)} | UPSC Relevant: {relevant_count} | Routine Filtered: {len(enriched) - relevant_count}")
+    if is_fallback:
+        print(f"[*] Morning Bulletin: Prepared using yesterday's complete wrap-up ({date_code}).")
 
     # 3. Generate Documents
     excel_filename = f"PIB_UPSC_Daily_{date_code}.xlsx"
@@ -61,7 +76,7 @@ def run_pipeline(target_date: date = None, open_files: bool = False):
         except Exception:
             pass
 
-    return excel_path, docx_path
+    return excel_path, docx_path, date_code
 
 
 def install_windows_task(run_time: str = "21:00"):
@@ -144,11 +159,11 @@ def main():
             print("[!] Invalid date format. Use YYYY-MM-DD (e.g. 2026-10-04).")
             return
     
-    excel_path, docx_path = run_pipeline(target_date=target, open_files=args.open)
+    excel_path, docx_path, result_date_code = run_pipeline(target_date=target, open_files=args.open)
 
     if (args.email or args.to) and (excel_path or docx_path):
         from send_email import send_daily_brief_email
-        target_str = target.strftime("%Y-%m-%d") if target else None
+        target_str = result_date_code if result_date_code else (target.strftime("%Y-%m-%d") if target else None)
         send_daily_brief_email(target_date=target_str, to_override=args.to)
 
 

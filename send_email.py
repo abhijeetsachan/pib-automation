@@ -7,7 +7,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
-from datetime import date
+from datetime import date, timedelta
 
 # Ensure safe console output encoding on Windows
 if hasattr(sys.stdout, "reconfigure"):
@@ -64,6 +64,16 @@ def send_daily_brief_email(target_date: str = None, to_override: str = None):
     # Locate today's generated files
     docx_candidates = list(OUTPUT_DIR.glob(f"PIB_UPSC_Daily_{date_str}*.docx"))
     xlsx_candidates = list(OUTPUT_DIR.glob(f"PIB_UPSC_Daily_{date_str}*.xlsx"))
+
+    # Smart Morning Fallback: if no files found for today and no specific date forced, use yesterday's
+    if not docx_candidates and not xlsx_candidates and not target_date:
+        yesterday_str = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+        y_docx = list(OUTPUT_DIR.glob(f"PIB_UPSC_Daily_{yesterday_str}*.docx"))
+        y_xlsx = list(OUTPUT_DIR.glob(f"PIB_UPSC_Daily_{yesterday_str}*.xlsx"))
+        if y_docx or y_xlsx:
+            print(f"[*] No documents found for today ({date_str}). Using yesterday's briefing ({yesterday_str}).")
+            date_str = yesterday_str
+            docx_candidates, xlsx_candidates = y_docx, y_xlsx
 
     # Pick the most recently modified files
     docx_file = max(docx_candidates, key=lambda f: f.stat().st_mtime) if docx_candidates else None

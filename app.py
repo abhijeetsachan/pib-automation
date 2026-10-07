@@ -330,6 +330,13 @@ if should_fetch:
         scraper = PIBScraper()
         releases, formatted_date = scraper.fetch_releases(target_date=selected_date)
         
+        # Smart Morning Fallback: if checking today and none published yet, load yesterday's complete wrap-up
+        if not releases and selected_date == today_val:
+            yesterday_date = today_val - timedelta(days=1)
+            st.toast(f"ℹ️ PIB hasn't published today's releases yet. Loading yesterday's briefing ({yesterday_date.strftime('%d %B %Y')}).", icon="☕")
+            releases, formatted_date = scraper.fetch_releases(target_date=yesterday_date)
+            selected_date = yesterday_date
+
         classifier = UPSCClassifier()
         enriched = classifier.process_all(releases)
         
