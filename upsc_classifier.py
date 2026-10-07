@@ -84,11 +84,22 @@ class UPSCClassifier:
             }
 
         # Step 3: Nodal Strategic Ministries Policy Fallback
-        # Only if headline contains clear policy/action verbs
+        # Expanded to capture appointments, military exercises, and scientific discoveries
         policy_action_words = [
+            # Policy, reform & governance initiatives
             r"\bapproves?\b", r"\blaunches?\b", r"\bpolicy\b", r"\bguidelines?\b",
             r"\bschemes?\b", r"\bmission\b", r"\breport\b", r"\bindex\b",
-            r"\bagreement\b", r"\binitiative\b", r"\boperations?\b", r"\bmeasures?\b"
+            r"\bagreement\b", r"\binitiative\b", r"\boperations?\b", r"\bmeasures?\b",
+            # Institutional & High-Level Appointments
+            r"\bappoints?\b", r"\bappointed\b", r"\bappointment\b", r"\bassumes?\s+charge\b",
+            r"\btakes?\s+over\b", r"\belevation\b",
+            # Military, Maritime & Security Operations / Exercises
+            r"\bexercises?\b", r"\bcommissions?\b", r"\bflagged?\s+off\b", r"\binducts?\b",
+            r"\bdrills?\b", r"\bdeployment\b", r"\binaugurates?\b", r"\bparticipates?\b",
+            # Scientific discoveries, R&D & breakthroughs
+            r"\bdiscovers?\b", r"\bdiscovery\b", r"\breveals?\b", r"\bbreakthrough\b",
+            r"\bfindings?\b", r"\bidentifies?\b", r"\bdevelops?\b", r"\bunveils?\b",
+            r"\bdetects?\b", r"\bresearchers?\b", r"\bastronomers?\b", r"\bstudy\b"
         ]
         has_policy_action = any(re.search(pat, combined_text) for pat in policy_action_words)
 
@@ -99,6 +110,8 @@ class UPSCClassifier:
                 "ministry of finance": ("GS-3", "Economic Governance & Fiscal Policy"),
                 "ministry of environment, forest and climate change": ("GS-3", "Ecology, Climate Action & Conservation"),
                 "department of atomic energy": ("GS-3", "Science, Nuclear Energy & Strategic Tech"),
+                "department of space": ("GS-3", "Space Technology & Planetary Exploration"),
+                "ministry of earth sciences": ("GS-1", "Oceanography, Meteorology & Earth Systems"),
                 "ministry of law and justice": ("GS-2", "Constitutional Provisions & Legal Framework"),
                 "ministry of personnel, public grievances & pensions": ("GS-2", "Administrative Reforms & Governance Quality"),
                 "ministry of science and technology": ("GS-3", "Indigenization of Technology & R&D"),
