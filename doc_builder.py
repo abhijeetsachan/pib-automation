@@ -315,6 +315,47 @@ class DocumentBuilder:
                 cls._add_hyperlink(p_meta, item.get('url', ''), item.get('url', ''), color_hex="0284C7", font_size_pt=9.0)
                 p_meta.add_run("\n")
 
+        # Section for other scraped releases (Routine / Non-UPSC)
+        routine_items = [r for r in releases if not r.get("is_relevant")]
+        if routine_items:
+            h_rout = doc.add_paragraph()
+            h_rout.paragraph_format.space_before = Pt(18)
+            h_rout.paragraph_format.space_after = Pt(4)
+            r_hr = h_rout.add_run(f"■ Other Scraped PIB Releases ({len(routine_items)} Filtered Routine Notices)")
+            r_hr.font.name = "Arial"
+            r_hr.font.size = Pt(12)
+            r_hr.font.bold = True
+            r_hr.font.color.rgb = RGBColor(100, 116, 139)
+
+            for idx, item in enumerate(routine_items, 1):
+                p_item = doc.add_paragraph()
+                p_item.paragraph_format.left_indent = Inches(0.2)
+                p_item.paragraph_format.space_before = Pt(4)
+                p_item.paragraph_format.space_after = Pt(2)
+
+                r_num = p_item.add_run(f"{idx}. ")
+                r_num.font.bold = True
+                r_hl = p_item.add_run(f"{item.get('headline', '')}\n")
+                r_hl.font.name = "Calibri"
+                r_hl.font.size = Pt(10.5)
+
+                p_meta = doc.add_paragraph()
+                p_meta.paragraph_format.left_indent = Inches(0.4)
+                p_meta.paragraph_format.space_after = Pt(2)
+
+                r_min = p_meta.add_run(f"Ministry: {item.get('ministry', '')}\n")
+                r_min.font.size = Pt(9)
+                r_min.font.italic = True
+                r_min.font.color.rgb = RGBColor(100, 116, 139)
+
+                r_lbl = p_meta.add_run("Official PIB Link: ")
+                r_lbl.font.size = Pt(9)
+                r_lbl.font.bold = True
+                r_lbl.font.color.rgb = RGBColor(71, 85, 105)
+
+                cls._add_hyperlink(p_meta, item.get('url', ''), item.get('url', ''), color_hex="0284C7", font_size_pt=9.0)
+                p_meta.add_run("\n")
+
         return doc
 
     @classmethod

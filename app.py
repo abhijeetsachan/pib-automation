@@ -487,7 +487,7 @@ with act_col3:
 # Direct Email Dispatch Expander
 with st.expander("📧 Dispatch Brief via Email Directly from Dashboard", expanded=False):
     load_env_file()
-    default_recipient = os.environ.get("MAIL_TO", "abhijeetsachan17@gmail.com")
+    default_recipient = os.environ.get("MAIL_TO") or os.environ.get("MAIL_USERNAME", "abhijeetsachan17may@gmail.com")
     
     e_col1, e_col2 = st.columns([3, 1])
     with e_col1:

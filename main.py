@@ -56,18 +56,52 @@ def run_pipeline(target_date: date = None, open_files: bool = False):
     if is_fallback:
         print(f"[*] Morning Bulletin: Prepared using yesterday's complete wrap-up ({date_code}).")
 
-    # 3. Generate Documents
+    # Mention all scraped PIB articles with their hyperlinked URLs separately
+    relevant_items = [r for r in enriched if r.get("is_relevant")]
+    routine_items = [r for r in enriched if not r.get("is_relevant")]
+
+    print("\n" + "=" * 70)
+    print(f"  SCRAPED PIB ARTICLES & HYPERLINKS ({len(enriched)} Total Releases)")
+    print("=" * 70)
+
+    if relevant_items:
+        print(f"\n--- UPSC RELEVANT ARTICLES ({len(relevant_items)}) ---")
+        for idx, item in enumerate(relevant_items, 1):
+            paper = item.get("paper", "UPSC")
+            print(f"\n[{idx}] [{paper}] {item.get('headline')}")
+            print(f"    Ministry: {item.get('ministry')}")
+            if item.get("relevance_reason"):
+                print(f"    Topic:    {item.get('relevance_reason')}")
+            print(f"    PIB URL:  {item.get('url')}")
+
+    if routine_items:
+        print(f"\n--- OTHER SCRAPED PIB RELEASES ({len(routine_items)}) ---")
+        for idx, item in enumerate(routine_items, 1):
+            print(f"\n[{idx}] [Routine] {item.get('headline')}")
+            print(f"    Ministry: {item.get('ministry')}")
+            print(f"    PIB URL:  {item.get('url')}")
+    print("\n" + "=" * 70 + "\n")
+
+    # 3. Generate Documents & HTML Email Briefing
     excel_filename = f"PIB_UPSC_Daily_{date_code}.xlsx"
     docx_filename = f"PIB_UPSC_Daily_{date_code}.docx"
+    email_html_filename = f"PIB_UPSC_Daily_{date_code}_email.html"
     
     excel_path = str(OUTPUT_DIR / excel_filename)
     docx_path = str(OUTPUT_DIR / docx_filename)
+    email_html_path = str(OUTPUT_DIR / email_html_filename)
 
     DocumentBuilder.generate_excel(enriched, excel_path, formatted_date)
     DocumentBuilder.generate_docx(enriched, docx_path, formatted_date)
 
+    from send_email import generate_email_html
+    email_html_content = generate_email_html(enriched, date_code)
+    with open(email_html_path, "w", encoding="utf-8") as f:
+        f.write(email_html_content)
+
     print(f"[✓] Generated Excel: {excel_path}")
-    print(f"[✓] Generated Word:  {docx_path}")
+    print(f"[✓] Generated Word:       {docx_path}")
+    print(f"[✓] Generated HTML Brief: {email_html_path}")
     print("=" * 60 + "\n")
 
     if open_files and sys.platform == "win32":
@@ -76,7 +110,7 @@ def run_pipeline(target_date: date = None, open_files: bool = False):
         except Exception:
             pass
 
-    return excel_path, docx_path, date_code
+    return excel_path, docx_path, date_code, email_html_path, enriched
 
 
 def install_windows_task(run_time: str = "21:00"):
@@ -159,12 +193,27 @@ def main():
             print("[!] Invalid date format. Use YYYY-MM-DD (e.g. 2026-10-04).")
             return
     
-    excel_path, docx_path, result_date_code = run_pipeline(target_date=target, open_files=args.open)
+    res = run_pipeline(target_date=target, open_files=args.open)
+    if not res or not res[0]:
+        return
+    excel_path, docx_path, result_date_code, email_html_path, enriched = res
+
+    # Export generated file paths to GitHub Actions output if running in a runner
+    github_output = os.environ.get("GITHUB_OUTPUT")
+    if github_output and docx_path and excel_path:
+        try:
+            with open(github_output, "a", encoding="utf-8") as gh_out:
+                gh_out.write(f"docx={docx_path}\n")
+                gh_out.write(f"xlsx={excel_path}\n")
+                gh_out.write(f"date_code={result_date_code}\n")
+                gh_out.write(f"email_html={email_html_path}\n")
+        except Exception as e:
+            print(f"[!] Warning: Could not write to GITHUB_OUTPUT: {e}")
 
     if (args.email or args.to) and (excel_path or docx_path):
         from send_email import send_daily_brief_email
         target_str = result_date_code if result_date_code else (target.strftime("%Y-%m-%d") if target else None)
-        send_daily_brief_email(target_date=target_str, to_override=args.to)
+        send_daily_brief_email(target_date=target_str, to_override=args.to, releases=enriched)
 
 
 if __name__ == "__main__":

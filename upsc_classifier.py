@@ -43,9 +43,24 @@ class UPSCClassifier:
                 - score (int: 1-10)
         """
         combined_text = f"{headline} {ministry} {article_snippet}".lower()
+        is_backgrounder = "backgrounder" in ministry.lower() or "backgrounder" in headline.lower()
 
-        # Step 1: Strict noise filtering (Social media quotes, Subhashitam, Sports, Protocol)
-        if self.is_noise(headline, combined_text):
+        # Substantive UPSC Overrides: Prevents real national/scientific/history news & PIB Backgrounders
+        # from being suppressed by superficial noise words (e.g. "PM congratulates ISRO" or "PM pays tribute")
+        substantive_patterns = [
+            # Space & Advanced Technology
+            r"\b(?:isro|gslv(?:-[a-z0-9]+)?|pslv(?:-[a-z0-9]+)?|sslv|nvs(?:-[0-9]+)?|navic|irnss|chandrayaan|gaganyaan|aditya-l1|satellite\s+launch|space\s+mission|spacecraft)\b",
+            # Modern History, Personalities & Commemorations
+            r"\b(?:sardar\s+(?:vallabhbhai\s+)?patel|rashtriya\s+ekta\s+diwas|national\s+unity\s+day|birth\s+anniversary|death\s+anniversary|punyatithi|freedom\s+fighter|mahatma\s+gandhi|b\.?r\.?\s+ambedkar|subhas\s+chandra\s+bose|bhagat\s+singh|tribal\s+pride\s+day|janjatiya\s+gaurav)\b",
+            # Internal Security, Policing & Gallantry
+            r"\b(?:dakshata\s+padak|kendriya\s+grihmantri\s+dakshata\s+padak|police\s+medal|gallantry\s+award|capfs?|cpos?|crpf|bsf|cisf|itbp|ssb|nsg)\b",
+            # Major Schemes & Infrastructure
+            r"\b(?:pmgsy(?:-[a-z0-9]+)?|pradhan\s+mantri\s+gram\s+sadak\s+yojana|rural\s+connectivity|social\s+security\s+coverage)\b",
+        ]
+        has_substantive_override = is_backgrounder or any(re.search(pat, combined_text, re.IGNORECASE) for pat in substantive_patterns)
+
+        # Step 1: Strict noise filtering (only if not protected by a substantive override)
+        if not has_substantive_override and self.is_noise(headline, combined_text):
             return {
                 "is_relevant": False,
                 "paper": "Routine/Ceremonial",
@@ -74,23 +89,36 @@ class UPSCClassifier:
             best_paper = max(paper_matches.keys(), key=lambda p: len(paper_matches[p]))
             matched_keywords = paper_matches[best_paper]
             relevance_score = min(10, 5 + len(matched_keywords) * 2)
+            tags = ["PIB Backgrounder"] + matched_keywords[:3] if is_backgrounder else matched_keywords[:4]
 
             return {
                 "is_relevant": True,
                 "paper": best_paper,
                 "paper_title": UPSC_PAPERS[best_paper]["title"],
-                "relevance_reason": f"Aligned with {UPSC_PAPERS[best_paper]['title']} topics: {', '.join(matched_keywords[:3])}",
-                "tags": matched_keywords[:4],
+                "relevance_reason": f"{'PIB Backgrounder: ' if is_backgrounder else ''}Aligned with {UPSC_PAPERS[best_paper]['title']} topics: {', '.join(matched_keywords[:3])}",
+                "tags": tags,
                 "score": relevance_score
+            }
+
+        # Guaranteed Relevance for PIB Backgrounders (In-depth policy overviews)
+        if is_backgrounder:
+            return {
+                "is_relevant": True,
+                "paper": "GS-2",
+                "paper_title": UPSC_PAPERS["GS-2"]["title"],
+                "relevance_reason": "High-yield Government Policy & National Development Overview (PIB Backgrounder)",
+                "tags": ["PIB Backgrounder", "Public Policy", "Governance"],
+                "score": 8
             }
 
         # Step 3: Nodal Strategic Ministries Policy Fallback
         # Captures policy actions, military exercises/commissioning, and scientific discoveries
         policy_action_words = [
             # Policy, reform & governance initiatives
-            r"\bapproves?\b", r"\blaunches?\b", r"\bpolicy\b", r"\bguidelines?\b",
+            r"\bapproves?\b", r"\bgets\s+approval\b", r"\blaunches?\b", r"\bpolicy\b", r"\bguidelines?\b",
             r"\bschemes?\b", r"\bmission\b", r"\breport\b", r"\bindex\b",
             r"\bagreement\b", r"\binitiative\b", r"\boperations?\b", r"\bmeasures?\b",
+            r"\bawarded\b", r"\bnotifies?\b", r"\bnotified\b", r"\bconnectivity\b",
             # Military, Maritime & Security Operations / Exercises / Commissioning
             r"\bexercises?\b", r"\bcommissions?\b", r"\bflagged?\s+off\b", r"\binducts?\b",
             r"\bdrills?\b", r"\bdeployment\b", r"\binaugurates?\b", r"\bparticipates?\b",
@@ -113,6 +141,11 @@ class UPSCClassifier:
                 "ministry of law and justice": ("GS-2", "Constitutional Provisions & Legal Framework"),
                 "ministry of personnel, public grievances & pensions": ("GS-2", "Administrative Reforms & Governance Quality"),
                 "ministry of science and technology": ("GS-3", "Indigenization of Technology & R&D"),
+                "ministry of home affairs": ("GS-3", "Internal Security, Police Reforms & Disaster Management"),
+                "ministry of rural development": ("GS-2", "Rural Development, Employment & Rural Infrastructure Schemes"),
+                "ministry of labour & employment": ("GS-2", "Social Security Coverage, Labour Codes & Workers Welfare"),
+                "ministry of road transport & highways": ("GS-3", "National Highways, Logistics & Transport Corridors"),
+                "ministry of jal shakti": ("GS-1", "Water Resources Management & River Basin Conservation"),
             }
 
             min_lower = ministry.lower()

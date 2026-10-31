@@ -14,6 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TZ: 'Asia/Kolkata'
+      MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+      MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+      MAIL_TO: ${{ secrets.MAIL_TO }}
 
     steps:
       - name: Checkout Code Repository
@@ -31,21 +34,66 @@ jobs:
           pip install -r requirements.txt
 
       - name: Execute Daily PIB Pipeline
+        id: pipeline
         run: |
           python main.py --today
+
+      - name: Identify Today's Brief Files
+        id: files
+        run: |
+          DOCX="${{ steps.pipeline.outputs.docx }}"
+          XLSX="${{ steps.pipeline.outputs.xlsx }}"
+          DATE_CODE="${{ steps.pipeline.outputs.date_code }}"
+          EMAIL_HTML="${{ steps.pipeline.outputs.email_html }}"
+
+          if [ -z "$DOCX" ] || [ ! -f "$DOCX" ]; then
+            DOCX=$(ls -t output/PIB_UPSC_Daily_*.docx 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$XLSX" ] || [ ! -f "$XLSX" ]; then
+            XLSX=$(ls -t output/PIB_UPSC_Daily_*.xlsx 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$EMAIL_HTML" ] || [ ! -f "$EMAIL_HTML" ]; then
+            EMAIL_HTML=$(ls -t output/PIB_UPSC_Daily_*_email.html 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$DATE_CODE" ]; then
+            DATE_CODE=$(date +'%Y-%m-%d')
+          fi
+
+          ATTACHMENTS=""
+          if [ -n "$DOCX" ] && [ -f "$DOCX" ]; then
+            ATTACHMENTS="$DOCX"
+          fi
+          if [ -n "$XLSX" ] && [ -f "$XLSX" ]; then
+            if [ -n "$ATTACHMENTS" ]; then
+              ATTACHMENTS="$ATTACHMENTS,$XLSX"
+            else
+              ATTACHMENTS="$XLSX"
+            fi
+          fi
+
+          echo "docx=$DOCX" >> $GITHUB_OUTPUT
+          echo "xlsx=$XLSX" >> $GITHUB_OUTPUT
+          echo "email_html=$EMAIL_HTML" >> $GITHUB_OUTPUT
+          echo "date_code=$DATE_CODE" >> $GITHUB_OUTPUT
+          echo "attachments=$ATTACHMENTS" >> $GITHUB_OUTPUT
+          echo "Selected files to attach:"
+          echo "  DOCX: $DOCX"
+          echo "  XLSX: $XLSX"
+          echo "  HTML Brief: $EMAIL_HTML"
+          echo "  Date: $DATE_CODE"
+          echo "  Attachments: $ATTACHMENTS"
 
       - name: Upload Daily Brief Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: pib-daily-briefs
-          path: output/*.*
+          name: pib-daily-brief-${{ steps.files.outputs.date_code }}
+          path: |
+            ${{ steps.files.outputs.docx }}
+            ${{ steps.files.outputs.xlsx }}
           retention-days: 30
 
       - name: Dispatch Email to Recipient
         if: ${{ env.MAIL_USERNAME != '' && env.MAIL_PASSWORD != '' }}
-        env:
-          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
-          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
         uses: dawidd6/action-send-mail@v4
         with:
           server_address: smtp.gmail.com
@@ -53,16 +101,11 @@ jobs:
           secure: true
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          subject: 🇮🇳 PIB UPSC Daily Compilation
+          subject: 🇮🇳 PIB UPSC Daily Compilation - ${{ steps.files.outputs.date_code }}
           to: ${{ secrets.MAIL_TO }}
           from: PIB UPSC Automation <${{ secrets.MAIL_USERNAME }}>
-          html_body: |
-            <div style="font-family: Arial, sans-serif; padding: 15px;">
-              <h2 style="color: #1E3A8A;">🇮🇳 PIB Daily UPSC Intelligence</h2>
-              <p>Your automated daily PIB briefing has been compiled and aligned with the UPSC syllabus.</p>
-              <p>Please find attached today's <b>Word Brief (.docx)</b> and <b>Excel Tracker (.xlsx)</b> files.</p>
-            </div>
-          attachments: output/*.*
+          html_body: file://${{ steps.files.outputs.email_html }}
+          attachments: ${{ steps.files.outputs.attachments }}
 
       - name: Commit and Push Daily Archive
         run: |
