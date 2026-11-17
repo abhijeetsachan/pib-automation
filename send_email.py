@@ -8,6 +8,7 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 from datetime import date, timedelta
+from run_status import completed_files
 
 # Ensure safe console output encoding on Windows
 if hasattr(sys.stdout, "reconfigure"):
@@ -202,27 +203,11 @@ def send_daily_brief_email(target_date: str = None, to_override: str = None, rel
 
     date_str = target_date if target_date else date.today().strftime("%Y-%m-%d")
     
-    # Locate today's generated files
-    docx_candidates = list(OUTPUT_DIR.glob(f"PIB_UPSC_Daily_{date_str}*.docx"))
-    xlsx_candidates = list(OUTPUT_DIR.glob(f"PIB_UPSC_Daily_{date_str}*.xlsx"))
-
-    # Smart Morning Fallback: if no files found for today and no specific date forced, use yesterday's
-    if not docx_candidates and not xlsx_candidates and not target_date:
-        yesterday_str = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
-        y_docx = list(OUTPUT_DIR.glob(f"PIB_UPSC_Daily_{yesterday_str}*.docx"))
-        y_xlsx = list(OUTPUT_DIR.glob(f"PIB_UPSC_Daily_{yesterday_str}*.xlsx"))
-        if y_docx or y_xlsx:
-            print(f"[*] No documents found for today ({date_str}). Using yesterday's briefing ({yesterday_str}).")
-            date_str = yesterday_str
-            docx_candidates, xlsx_candidates = y_docx, y_xlsx
-
-    # Pick the most recently modified files
-    docx_file = max(docx_candidates, key=lambda f: f.stat().st_mtime) if docx_candidates else None
-    xlsx_file = max(xlsx_candidates, key=lambda f: f.stat().st_mtime) if xlsx_candidates else None
-
-    if not docx_file and not xlsx_file:
-        print(f"[!] No output documents found for {date_str} to email.")
-        return False
+    # Only use exact artifacts from one completed run. Archived files and
+    # numbered lock fallbacks must never be combined through glob discovery.
+    manifest = OUTPUT_DIR / f"PIB_UPSC_Daily_{date_str}_status.json"
+    files = completed_files(manifest, date_str)
+    docx_file, xlsx_file = files["docx"], files["xlsx"]
 
     # Create message
     msg = MIMEMultipart()
@@ -230,59 +215,26 @@ def send_daily_brief_email(target_date: str = None, to_override: str = None, rel
     msg["To"] = mail_to
     msg["Subject"] = f"🇮🇳 PIB UPSC Daily Compilation - {date_str}"
 
-    # Determine HTML body (uses rich hyperlinked briefing if available)
-    html_file = OUTPUT_DIR / f"PIB_UPSC_Daily_{date_str}_email.html"
-    if releases:
-        html_body = generate_email_html(releases, date_str)
-    elif html_file.exists():
-        try:
-            with open(html_file, "r", encoding="utf-8") as f:
-                html_body = f.read()
-        except Exception:
-            html_body = None
-    else:
-        html_body = None
-
-    if not html_body:
-        html_body = f"""
-    <html>
-      <body style="font-family: Arial, sans-serif; color: #1E293B; line-height: 1.6; padding: 10px;">
-        <div style="background-color: #1E3A8A; color: white; padding: 16px 20px; border-radius: 8px 8px 0 0;">
-          <h2 style="margin: 0;">🇮🇳 PIB Daily UPSC Sorting</h2>
-          <p style="margin: 4px 0 0 0; font-size: 14px; opacity: 0.9;">Date: {date_str} | Civil Services Examination (GS 1-4)</p>
-        </div>
-        <div style="border: 1px solid #E2E8F0; border-top: none; padding: 20px; border-radius: 0 0 8px 8px; background: #FFFFFF;">
-          <p>Hello,</p>
-          <p>Your automated PIB briefing for <b>{date_str}</b> has been compiled and aligned with the UPSC syllabus.</p>
-          
-          <div style="background: #F8FAFC; border-left: 4px solid #2563EB; padding: 12px 16px; margin: 15px 0;">
-            <p style="margin: 0; font-weight: bold; color: #1E40AF;">Attached Documents:</p>
-            <ul style="margin: 8px 0 0 0; padding-left: 20px;">
-              <li><b>Word Brief (.docx)</b>: Executive summary with releases grouped by GS-1, GS-2, GS-3, GS-4, topic tags, and source links.</li>
-              <li><b>Excel Tracker (.xlsx)</b>: Color-coded tracker sheet + full audit log of all releases.</li>
-            </ul>
-          </div>
-          
-          <p style="color: #64748B; font-size: 13px;">This is an automated dispatch from PIB UPSC GitHub Automation runner by Abhijeet</p>
-        </div>
-      </body>
-    </html>
-    """
+    # Keep the message body and attachments from the same completed run.
+    # The releases argument remains accepted for existing callers.
+    html_file = files["email_html"]
+    html_body = html_file.read_text(encoding="utf-8")
+    if not html_body.strip():
+        raise RuntimeError("Current run's email briefing is empty; dispatch cancelled.")
     msg.attach(MIMEText(html_body, "html"))
 
     # Attach files
     for filepath in [docx_file, xlsx_file]:
-        if filepath and filepath.exists():
-            try:
-                with open(filepath, "rb") as f:
-                    part = MIMEBase("application", "octet-stream")
-                    part.set_payload(f.read())
-                    encoders.encode_base64(part)
-                    part.add_header("Content-Disposition", f'attachment; filename="{filepath.name}"')
-                    msg.attach(part)
-                    print(f"[+] Attached: {filepath.name}")
-            except Exception as e:
-                print(f"[!] Error attaching {filepath.name}: {e}")
+        try:
+            with open(filepath, "rb") as f:
+                part = MIMEBase("application", "octet-stream")
+                part.set_payload(f.read())
+                encoders.encode_base64(part)
+                part.add_header("Content-Disposition", f'attachment; filename="{filepath.name}"')
+                msg.attach(part)
+                print(f"[+] Attached: {filepath.name}")
+        except OSError as exc:
+            raise RuntimeError(f"Cannot attach required report {filepath.name}; email cancelled.") from exc
 
     # Dispatch via Gmail SMTP (Port 587 STARTTLS is universally allowed on cloud runners)
     ports_to_try = [

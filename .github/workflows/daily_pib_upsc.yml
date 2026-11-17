@@ -38,50 +38,28 @@ jobs:
         run: |
           python main.py --today
 
-      - name: Identify Today's Brief Files
+      - name: Validate Current Run Artifacts
         id: files
+        env:
+          RUN_STATUS: ${{ steps.pipeline.outputs.status }}
+          RUN_DOCX: ${{ steps.pipeline.outputs.docx }}
+          RUN_XLSX: ${{ steps.pipeline.outputs.xlsx }}
+          RUN_HTML: ${{ steps.pipeline.outputs.email_html }}
+          RUN_DATE: ${{ steps.pipeline.outputs.date_code }}
+          RUN_MANIFEST: ${{ steps.pipeline.outputs.manifest }}
         run: |
-          DOCX="${{ steps.pipeline.outputs.docx }}"
-          XLSX="${{ steps.pipeline.outputs.xlsx }}"
-          DATE_CODE="${{ steps.pipeline.outputs.date_code }}"
-          EMAIL_HTML="${{ steps.pipeline.outputs.email_html }}"
-
-          if [ -z "$DOCX" ] || [ ! -f "$DOCX" ]; then
-            DOCX=$(ls -t output/PIB_UPSC_Daily_*.docx 2>/dev/null | head -n 1)
-          fi
-          if [ -z "$XLSX" ] || [ ! -f "$XLSX" ]; then
-            XLSX=$(ls -t output/PIB_UPSC_Daily_*.xlsx 2>/dev/null | head -n 1)
-          fi
-          if [ -z "$EMAIL_HTML" ] || [ ! -f "$EMAIL_HTML" ]; then
-            EMAIL_HTML=$(ls -t output/PIB_UPSC_Daily_*_email.html 2>/dev/null | head -n 1)
-          fi
-          if [ -z "$DATE_CODE" ]; then
-            DATE_CODE=$(date +'%Y-%m-%d')
-          fi
-
-          ATTACHMENTS=""
-          if [ -n "$DOCX" ] && [ -f "$DOCX" ]; then
-            ATTACHMENTS="$DOCX"
-          fi
-          if [ -n "$XLSX" ] && [ -f "$XLSX" ]; then
-            if [ -n "$ATTACHMENTS" ]; then
-              ATTACHMENTS="$ATTACHMENTS,$XLSX"
-            else
-              ATTACHMENTS="$XLSX"
-            fi
-          fi
-
-          echo "docx=$DOCX" >> $GITHUB_OUTPUT
-          echo "xlsx=$XLSX" >> $GITHUB_OUTPUT
-          echo "email_html=$EMAIL_HTML" >> $GITHUB_OUTPUT
-          echo "date_code=$DATE_CODE" >> $GITHUB_OUTPUT
-          echo "attachments=$ATTACHMENTS" >> $GITHUB_OUTPUT
-          echo "Selected files to attach:"
-          echo "  DOCX: $DOCX"
-          echo "  XLSX: $XLSX"
-          echo "  HTML Brief: $EMAIL_HTML"
-          echo "  Date: $DATE_CODE"
-          echo "  Attachments: $ATTACHMENTS"
+          set -euo pipefail
+          test "$RUN_STATUS" = "complete"
+          test "$RUN_DATE" = "$(date +'%Y-%m-%d')"
+          for path in "$RUN_DOCX" "$RUN_XLSX" "$RUN_HTML" "$RUN_MANIFEST"; do
+            test -n "$path" && test -s "$path"
+          done
+          echo "docx=$RUN_DOCX" >> "$GITHUB_OUTPUT"
+          echo "xlsx=$RUN_XLSX" >> "$GITHUB_OUTPUT"
+          echo "email_html=$RUN_HTML" >> "$GITHUB_OUTPUT"
+          echo "manifest=$RUN_MANIFEST" >> "$GITHUB_OUTPUT"
+          echo "date_code=$RUN_DATE" >> "$GITHUB_OUTPUT"
+          echo "attachments=$RUN_DOCX,$RUN_XLSX" >> "$GITHUB_OUTPUT"
 
       - name: Upload Daily Brief Artifacts
         uses: actions/upload-artifact@v4
@@ -90,6 +68,9 @@ jobs:
           path: |
             ${{ steps.files.outputs.docx }}
             ${{ steps.files.outputs.xlsx }}
+            ${{ steps.files.outputs.email_html }}
+            ${{ steps.files.outputs.manifest }}
+          if-no-files-found: error
           retention-days: 30
 
       - name: Dispatch Email to Recipient
@@ -108,10 +89,15 @@ jobs:
           attachments: ${{ steps.files.outputs.attachments }}
 
       - name: Commit and Push Daily Archive
+        env:
+          RUN_DOCX: ${{ steps.files.outputs.docx }}
+          RUN_XLSX: ${{ steps.files.outputs.xlsx }}
+          RUN_HTML: ${{ steps.files.outputs.email_html }}
+          RUN_MANIFEST: ${{ steps.files.outputs.manifest }}
         run: |
           git config --global user.name "PIB Automation Bot"
           git config --global user.email "bot@pib-upsc.internal"
-          git add -A output/
+          git add -- "$RUN_DOCX" "$RUN_XLSX" "$RUN_HTML" "$RUN_MANIFEST"
           if git diff --staged --quiet; then
             echo "No new files to commit."
           else

@@ -122,9 +122,9 @@ Article selection reads PIB article bodies before classification in both the CLI
 and dashboard. Specific subjects in the headline receive more weight than body
 mentions; ministry names alone do not establish relevance. Ceremonial headlines
 can qualify when the source describes a concrete policy or research change.
-If an article body cannot be fetched, selection falls back to the headline and
-the release is marked with `article_fetch_status="unavailable"`. Reading each
-source adds network requests to a run.
+Reading each source adds network requests to a run. An unavailable article body
+is recorded as `article_fetch_status="unavailable"`; the pipeline withholds a
+complete bulletin until all source bodies have been extracted.
 
 DPRCG selection uses original source titles and article bodies, with English and
 Hindi topic dictionaries. Generic official titles do not earn relevance points,
@@ -148,3 +148,34 @@ python -m unittest discover -s tests -v
 ## ⚖️ License & Disclaimer
 
 Designed for educational and preparation purposes for the UPSC Civil Services Examination. All source press releases are the property of the Press Information Bureau, Government of India.
+
+
+## Clustering and run completeness
+
+DPRCG groups releases only when the original title establishes the same named
+scheme/event, action, publication date, and any explicit event date. Shared
+locations, communities, and incidental body mentions do not establish a match.
+Ambiguous stories remain separate. Only exact title/body duplicates with the
+same district lose duplicate synthesis text; all source URLs remain available.
+This conservative grouping may produce more individual articles than before.
+
+Both pipelines stop on fetch/parser failures and confirmed empty days; they do
+not substitute yesterday's releases. PIB verifies the server-selected date after
+fetching. To request yesterday explicitly, use `--date YYYY-MM-DD`.
+
+Each run first invalidates the previous status manifest. PIB writes
+`output/PIB_UPSC_Daily_YYYY-MM-DD_status.json`; DPRCG writes
+`output/dprcg/YYYY-MM-DD/run_status.json`. Statuses distinguish `complete`,
+`partial`, `index_only`, `no_releases`, `fetch_failed`, `parse_failed`, and
+`failed`. A completed run lists the exact generated filenames, including any
+numbered filenames used when Word/Excel has the original file open.
+
+Failed DPRCG topics are listed with their release IDs and coverage counts.
+Available partial Word/TXT reports carry `PARTIAL` in their filenames and date
+headers; the CLI exits unsuccessfully. `--no-llm` deliberately produces only an
+Excel index and records `index_only`. Existing archived reports are preserved,
+but their presence never establishes success for a new run.
+
+Email requires the current date's completed manifest, its HTML body, and both
+attachments. GitHub Actions accepts only paths exported by its successful
+pipeline step and never searches the archive for replacements.

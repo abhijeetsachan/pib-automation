@@ -23,7 +23,7 @@ Key Features:
     | Read More: <Static Syllabus Topics> |
 - Single Consolidated Output: All high-yield CGPSC articles saved in one master Word (.docx)
   document named `DD-MM-YYYY.docx` (e.g. `02-11-2026.docx`) and matching `.txt` file.
-- Smart Morning Fallback: Automatically compiles yesterday's complete 24-hr wrap-up if run early.
+- Explicit Run Status: Missing data and failed topics are reported without date fallback.
 - Date-wise Organized Output: `output/dprcg/<YYYY-MM-DD>/`.
 """
 
@@ -47,6 +47,8 @@ import requests
 from bs4 import BeautifulSoup
 from article_selection import (CGPSC_HINDI_KEYWORDS, CGPSC_ROUTINE_TERMS,
                                contains, has_substantive_evidence, weighted_matches)
+from topic_clustering import safe_clusters
+from run_status import FetchError, ParseError, NoReleasesError, IncompleteRunError, RunStatus
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -300,7 +302,7 @@ class DPRCGScraper:
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_BACKOFF * attempt)
 
-        raise RuntimeError(f"Failed to fetch {url} after {MAX_RETRIES} attempts.")
+        raise FetchError(f"Failed to fetch {url} after {MAX_RETRIES} attempts.")
 
     @staticmethod
     def _clean_slug_to_english_headline(raw_slug: str, raw_title: str = "") -> Tuple[str, str]:
@@ -364,14 +366,19 @@ class DPRCGScraper:
 
         logger.info("Fetching DPRCG releases for date: %s (%s)", formatted_date, url)
 
-        try:
-            resp = self._request_with_retry(url)
-        except Exception as exc:
-            logger.error("Error accessing date news URL: %s", exc)
-            return [], formatted_date
+        resp = self._request_with_retry(url)
+        returned_path = urllib.parse.urlparse(resp.url).path.rstrip("/")
+        if returned_path != urllib.parse.urlparse(url).path.rstrip("/"):
+            raise ParseError("DPRCG redirected away from the requested date listing.")
 
         soup = BeautifulSoup(resp.text, "html.parser")
         items = soup.find_all("div", class_="list-news")
+
+        if not items:
+            text = soup.get_text(" ", strip=True).lower()
+            if any(marker in text for marker in ("no news found", "no records found", "no data found", "??? ?????? ????")):
+                return [], formatted_date
+            raise ParseError("DPRCG listing structure missing; cannot confirm an empty news day.")
 
         logger.info("Discovered %d releases on DPRCG date page.", len(items))
 
@@ -423,11 +430,13 @@ class DPRCGScraper:
                 "image_url": ""
             })
 
+        if not releases:
+            raise ParseError("DPRCG listing contained items but no valid release links.")
         return releases, formatted_date
 
     def enrich_article_details(self, release: Dict) -> Dict:
         """Fetches full article text and image from the detail page."""
-        url = release.get("url")
+        url = urllib.parse.urljoin(DPRCG_BASE_URL, release.get("original_url") or release.get("url", ""))
         if not url:
             return release
 
@@ -478,6 +487,7 @@ class DPRCGScraper:
             if not release.get("summary"):
                 release["summary"] = f"Government initiative announced: {release['headline']}."
 
+        release["article_fetch_status"] = "ok" if release.get("body_text", "").strip() else "unavailable"
         return release
 
     def enrich_all(self, releases: List[Dict], max_workers: int = MAX_CONCURRENT_WORKERS) -> List[Dict]:
@@ -753,328 +763,25 @@ def format_why_in_news(text: str, existing_bullets: Optional[List[str]] = None) 
 # ==============================================================================
 
 class TopicClusterer:
-    """
-    Groups relevant DPRCG releases into cohesive thematic clusters.
-    Releases on the same event, scheme, or policy development (e.g., Janjatiya Gaurav
-    Divas, Kharif Paddy Procurement launch) are clubbed into a unified master cluster.
-    Any release that provides zero distinct information or merely repeats routine
-    announcements is flagged and dropped to avoid duplication.
+    """Group only releases with an explicit shared subject, action, and date.
+
+    Clustering is deterministic: ambiguous stories stay independent. LLM guesses
+    about redundant sources cannot remove facts from the synthesis corpus.
     """
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or GEMINI_API_KEY
-        self.models = GEMINI_MODELS
-
-    def _get_endpoint(self, model_name: str) -> str:
-        return f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.api_key}"
+        self.api_key = api_key
 
     def cluster_releases(self, releases: List[Dict]) -> List[Dict]:
-        """
-        Main entry point for clustering. Attempts LLM semantic clustering first,
-        and falls back to deterministic rule-based clustering if needed.
-        Returns a list of cluster dictionaries:
-        [{
-            "topic": str,
-            "paper": str,
-            "paper_title": str,
-            "releases": List[Dict],
-            "urls": List[str],
-            "dropped_ids": List[str]
-        }]
-        """
-        if not releases:
-            return []
-        if len(releases) == 1:
-            r = releases[0]
-            return [{
-                "topic": r.get("headline", ""),
-                "paper": r.get("paper", "CGPSC-PRE"),
-                "paper_title": r.get("paper_title", ""),
-                "releases": [r],
-                "urls": [r.get("url", "")] if r.get("url") else [],
-                "dropped_ids": []
-            }]
-
-        llm_clusters = self._cluster_with_llm(releases)
-        if llm_clusters:
-            return self._consolidate_overlapping_clusters(llm_clusters)
-
-        logger.warning("Falling back to deterministic rule-based topic clustering.")
-        return self._consolidate_overlapping_clusters(self._cluster_heuristic(releases))
+        return safe_clusters(releases)
 
     @classmethod
     def _consolidate_overlapping_clusters(cls, clusters: List[Dict]) -> List[Dict]:
-        """
-        Consolidates any clusters that belong to the exact same core topic
-        (e.g., multiple Janjatiya Gaurav Divas or Paddy Procurement clusters)
-        into a single unified master cluster with deduplicated URLs and releases.
-        """
-        theme_patterns = [
-            ("janjatiya", ["janjatiya", "जनजातीय", "birsa", "tribal pride", "tribal gaurav", "आदिवासी गौरव", "dharamjaigarh"]),
-            ("paddy", ["paddy", "dhan kharidi", "धान खरीदी", "उपार्जन केंद्र", "tuhar token", "krishak unnati"]),
-            ("mahtari", ["mahtari vandan", "महतारी वंदन", "pahadi korwa", "पहाड़ी कोरवा"]),
-            ("surya_ghar", ["surya ghar", "सूर्य घर", "muft bijli", "rooftop solar"]),
-            ("vishnu_ke_paati", ["vishnu ke paati", "विष्णु के पाती"])
-        ]
-
-        theme_map = {}
-        unmatched = []
-
-        for c in clusters:
-            topic_str = f"{c.get('topic', '')} " + " ".join(
-                f"{r.get('headline', '')} {r.get('raw_title', '')}" for r in c.get("releases", [])
-            ).lower()
-
-            matched_theme = None
-            for key, pats in theme_patterns:
-                if any(p.lower() in topic_str for p in pats):
-                    matched_theme = key
-                    break
-
-            if matched_theme:
-                if matched_theme not in theme_map:
-                    theme_map[matched_theme] = []
-                theme_map[matched_theme].append(c)
-            else:
-                unmatched.append(c)
-
-        merged_clusters = []
-        for theme_key, group in theme_map.items():
-            if len(group) == 1:
-                merged_clusters.append(group[0])
-            else:
-                # Merge multiple clusters for this theme into the primary cluster
-                group.sort(key=lambda x: len(x.get("releases", [])), reverse=True)
-                primary = group[0]
-                all_releases = []
-                seen_rel_ids = set()
-                all_urls = []
-                all_dropped = set(primary.get("dropped_ids", []))
-
-                for c in group:
-                    for r in c.get("releases", []):
-                        rid = str(r.get("id"))
-                        if rid not in seen_rel_ids:
-                            all_releases.append(r)
-                            seen_rel_ids.add(rid)
-                    for u in c.get("urls", []):
-                        if u and u not in all_urls:
-                            all_urls.append(u)
-                    all_dropped.update(c.get("dropped_ids", []))
-
-                primary["releases"] = all_releases
-                primary["urls"] = all_urls
-                primary["dropped_ids"] = list(all_dropped)
-                logger.info("Consolidated %d overlapping clusters for theme '%s' into one (%d total releases).", len(group), theme_key, len(all_releases))
-                merged_clusters.append(primary)
-
-        merged_clusters.extend(unmatched)
-        return merged_clusters
-
-    def _cluster_with_llm(self, releases: List[Dict]) -> Optional[List[Dict]]:
-        """Sends release metadata to Gemini to identify shared events and topics."""
-        if not self.api_key:
-            return None
-
-        # Build concise digest of items for the cluster prompt
-        items_digest = []
-        rel_map = {}
-        for r in releases:
-            r_id = str(r.get("id"))
-            rel_map[r_id] = r
-            h = r.get("headline", "")
-            rt = r.get("raw_title", "")
-            d = r.get("district", "Chhattisgarh")
-            body = (r.get("body_text", "") or r.get("summary", "") or "")[:250]
-            items_digest.append({
-                "id": r_id,
-                "district": d,
-                "headline": h,
-                "raw_title": rt[:120],
-                "summary": body
-            })
-
-        prompt = f"""You are a Senior Editor and Syllabus Director for Chhattisgarh State Current Affairs (CGPSC).
-Examine the following list of official Chhattisgarh Government press releases from the same date:
-
-{json.dumps(items_digest, ensure_ascii=False, indent=2)}
-
-TASK:
-1. Identify all releases that relate to the SAME core event, scheme, festival, policy launch, or administrative theme.
-   Examples of topics that MUST be clubbed together into a single cluster:
-   - All releases concerning 'Janjatiya Gaurav Divas', Bhagwan Birsa Munda celebrations, tribal development outlay (₹57,759 Cr), tribal museums, and regional tribal freedom fighters.
-   - All releases concerning 'Kharif Paddy Procurement 2026-27' (MSP bonus of ₹13,839/acre, Tuhar Token app, district-level procurement center arrangements, anti-smuggling crackdowns).
-   - Multiple releases covering the same welfare scheme or individual beneficiary story (e.g. Mahtari Vandan Yojana / Pahadi Korwa tribe).
-   - Multiple releases on the same initiative (e.g. 'Vishnu Ke Paati', Adi Karmayogi Abhiyan, etc.).
-
-2. For any release that covers a genuinely independent, unique topic (e.g., PM Surya Ghar Muft Bijli Yojana, Dhamtari PM SVANidhi award, State Election Commission courtesy call), place it in its own individual cluster.
-
-3. ZERO-INFORMATION / REDUNDANCY FILTER:
-   If multiple releases cover the same topic, check if any release is purely repetitive and adds NO new facts, metrics, or distinct data points beyond the primary release (e.g. routine district announcements that simply repeat that procurement starts on Nov 15 without distinct numbers).
-   Mark such redundant IDs in "dropped_ids". Their URLs will be retained, but their redundant text will be omitted from synthesis.
-
-OUTPUT FORMAT:
-Return ONLY a valid JSON list of clusters:
-[
-  {{
-    "topic": "<Descriptive Canonical Topic Name>",
-    "paper": "<CGPSC-P3, CGPSC-P4, CGPSC-P5, CGPSC-P6, CGPSC-P7, or CGPSC-PRE>",
-    "release_ids": ["<id1>", "<id2>"],
-    "dropped_ids": ["<redundant_id_if_any>"]
-  }}
-]
-"""
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.1,
-                "responseMimeType": "application/json"
-            }
-        }
-
-        for model_name in self.models:
-            endpoint = self._get_endpoint(model_name)
-            try:
-                resp = requests.post(
-                    endpoint,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                    timeout=45
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    candidates = data.get("candidates", [])
-                    if candidates and "content" in candidates[0]:
-                        raw_json = candidates[0]["content"]["parts"][0]["text"].strip()
-                        clusters_raw = json.loads(raw_json)
-                        if isinstance(clusters_raw, list) and clusters_raw:
-                            clusters = []
-                            assigned_ids = set()
-
-                            for c in clusters_raw:
-                                rel_ids = [str(i) for i in c.get("release_ids", []) if str(i) in rel_map]
-                                drop_ids = [str(i) for i in c.get("dropped_ids", []) if str(i) in rel_map]
-                                all_ids = rel_ids + [i for i in drop_ids if i not in rel_ids]
-
-                                if not all_ids:
-                                    continue
-
-                                cluster_rels = [rel_map[i] for i in all_ids]
-                                cluster_urls = []
-                                for r in cluster_rels:
-                                    u = r.get("url", "")
-                                    if u and u not in cluster_urls:
-                                        cluster_urls.append(u)
-
-                                paper_code = c.get("paper") or cluster_rels[0].get("paper", "CGPSC-PRE")
-                                paper_title = CGPSC_PAPERS.get(paper_code, {}).get("title", paper_code)
-
-                                clusters.append({
-                                    "topic": c.get("topic") or cluster_rels[0].get("headline", ""),
-                                    "paper": paper_code,
-                                    "paper_title": paper_title,
-                                    "releases": cluster_rels,
-                                    "urls": cluster_urls,
-                                    "dropped_ids": drop_ids
-                                })
-                                assigned_ids.update(all_ids)
-
-                            # Append unassigned releases as singletons
-                            for r_id, r in rel_map.items():
-                                if r_id not in assigned_ids:
-                                    clusters.append({
-                                        "topic": r.get("headline", ""),
-                                        "paper": r.get("paper", "CGPSC-PRE"),
-                                        "paper_title": r.get("paper_title", ""),
-                                        "releases": [r],
-                                        "urls": [r.get("url", "")] if r.get("url") else [],
-                                        "dropped_ids": []
-                                    })
-                            return clusters
-            except Exception as exc:
-                logger.warning("LLM clustering error with %s: %s", model_name, exc)
-                time.sleep(2)
-
-        return None
+        # Repartition from source evidence, ignoring proposed topics/drop IDs.
+        return safe_clusters([r for cluster in clusters for r in cluster.get("releases", [])])
 
     def _cluster_heuristic(self, releases: List[Dict]) -> List[Dict]:
-        """Deterministic keyword/entity-based topic clustering fallback."""
-        clusters_def = [
-            {
-                "key": "janjatiya_gaurav",
-                "topic": "Janjatiya Gaurav Divas 2026: Financial Outlays, Tribal Memorials, and Cultural Commemoration",
-                "paper": "CGPSC-P7",
-                "patterns": ["janjatiya gaurav", "birsa munda", "जनजातीय गौरव", "आदिवासी गौरव", "tribal pride", "tribal museum"]
-            },
-            {
-                "key": "paddy_procurement",
-                "topic": "Kharif Paddy Procurement 2026-27: Statewide Operations, MSP Bonus, and Digital Procurement Systems",
-                "paper": "CGPSC-P5",
-                "patterns": ["paddy procurement", "dhan kharidi", "धान खरीदी", "उपार्जन केंद्र", "tuhar token", "kharif marketing"]
-            },
-            {
-                "key": "mahtari_vandan",
-                "topic": "Mahtari Vandan Yojana: Financial Support and Economic Empowerment of Vulnerable Women",
-                "paper": "CGPSC-P7",
-                "patterns": ["mahtari vandan", "महतारी वंदन", "pahadi korwa", "पहाड़ी कोरवा"]
-            },
-            {
-                "key": "vishnu_ke_paati",
-                "topic": "Chief Minister's 'Vishnu Ke Paati' Initiative: Citizen Engagement and Grassroots Recognition",
-                "paper": "CGPSC-P3",
-                "patterns": ["vishnu ke paati", "विष्णु के पाती"]
-            },
-            {
-                "key": "surya_ghar",
-                "topic": "Pradhan Mantri Surya Ghar Muft Bijli Yojana: Rooftop Solar Expansion Across Chhattisgarh",
-                "paper": "CGPSC-P4",
-                "patterns": ["surya ghar", "सूर्य घर", "muft bijli", "rooftop solar"]
-            }
-        ]
-
-        assigned_ids = set()
-        clusters = []
-
-        for c_def in clusters_def:
-            c_releases = []
-            for r in releases:
-                r_id = str(r.get("id"))
-                if r_id in assigned_ids:
-                    continue
-                corpus = f"{r.get('headline', '')} {r.get('raw_title', '')} {r.get('body_text', '')}".lower()
-                if any(p.lower() in corpus for p in c_def["patterns"]):
-                    c_releases.append(r)
-                    assigned_ids.add(r_id)
-
-            if c_releases:
-                cluster_urls = []
-                for r in c_releases:
-                    u = r.get("url", "")
-                    if u and u not in cluster_urls:
-                        cluster_urls.append(u)
-                clusters.append({
-                    "topic": c_def["topic"],
-                    "paper": c_def["paper"],
-                    "paper_title": CGPSC_PAPERS.get(c_def["paper"], {}).get("title", c_def["paper"]),
-                    "releases": c_releases,
-                    "urls": cluster_urls,
-                    "dropped_ids": []
-                })
-
-        # Leftovers become singletons
-        for r in releases:
-            r_id = str(r.get("id"))
-            if r_id not in assigned_ids:
-                clusters.append({
-                    "topic": r.get("headline", ""),
-                    "paper": r.get("paper", "CGPSC-PRE"),
-                    "paper_title": r.get("paper_title", ""),
-                    "releases": [r],
-                    "urls": [r.get("url", "")] if r.get("url") else [],
-                    "dropped_ids": []
-                })
-
-        return clusters
+        return safe_clusters(releases)
 
 
 # ==============================================================================
@@ -1119,7 +826,7 @@ class GeminiCurrentAffairsSynthesizer:
             b = r.get("body_text", "") or r.get("summary", "")
             if not b.strip():
                 b = r.get("raw_title", "")
-            sources_blocks.append(f"--- SOURCE RELEASE {idx} [{d}] ---\nHeadline: {h}\nURL: {u}\nContent:\n{b[:3500]}")
+            sources_blocks.append(f"--- SOURCE RELEASE {idx} [{d}] ---\nHeadline: {h}\nURL: {u}\nContent:\n{b}")
         sources_text = "\n\n".join(sources_blocks)
 
         urls_formatted = "\n".join(f"* {u}" for u in urls) if len(urls) > 1 else (urls[0] if urls else "")
@@ -1267,6 +974,7 @@ MANDATORY EDITORIAL REQUIREMENTS:
         """Synthesizes all topic clusters into structured master articles with polite pacing."""
         logger.info("Synthesizing %d consolidated current affairs topics via Gemini LLM...", len(clusters))
         synthesized_articles = []
+        self.failed_topics = []
 
         for idx, cluster in enumerate(clusters, start=1):
             topic = cluster.get("topic", "")
@@ -1282,6 +990,11 @@ MANDATORY EDITORIAL REQUIREMENTS:
                 retry_res = self.synthesize_cluster(cluster)
                 if retry_res:
                     synthesized_articles.append(retry_res)
+                else:
+                    self.failed_topics.append({
+                        "topic": topic,
+                        "release_ids": [str(r["id"]) for r in cluster.get("releases", [])],
+                    })
 
             if idx < len(clusters):
                 time.sleep(2.5)
@@ -2216,6 +1929,13 @@ class DPRCGDocumentBuilder:
 # ==============================================================================
 
 def run_dprcg_pipeline(target_date: Optional[date] = None, no_llm: bool = False):
+    target = target_date or date.today()
+    manifest = DPRCG_OUTPUT_BASE / target.isoformat() / "run_status.json"
+    with RunStatus(manifest, target) as status:
+        return _run_dprcg_pipeline(target, no_llm, status)
+
+
+def _run_dprcg_pipeline(target_date, no_llm, status):
     """Executes the complete fetch -> classify -> LLM synthesize -> master document generation."""
     target = target_date if target_date else date.today()
     date_code = target.strftime("%Y-%m-%d")
@@ -2228,24 +1948,15 @@ def run_dprcg_pipeline(target_date: Optional[date] = None, no_llm: bool = False)
     scraper = DPRCGScraper()
     releases, formatted_date = scraper.fetch_date_releases(target_date=target)
 
-    # Smart Morning Fallback (if early morning and today's releases aren't published yet)
-    is_fallback = False
-    if not releases and target == date.today():
-        yesterday = target - timedelta(days=1)
-        print(f"[!] No releases found for today ({formatted_date}) yet.")
-        print(f"[*] Activating Morning Fallback -> Compiling yesterday's bulletin ({yesterday.strftime('%d %B %Y')})...")
-        target = yesterday
-        date_code = target.strftime("%Y-%m-%d")
-        display_date = target.strftime("%d-%m-%Y")
-        releases, formatted_date = scraper.fetch_date_releases(target_date=target)
-        is_fallback = True
-
     if not releases:
-        print(f"[!] No DPRCG releases found for {formatted_date}.")
-        return None, None
+        raise NoReleasesError(f"No DPRCG releases published for {formatted_date}; no reports generated.")
 
     # Step 1: Concurrently enrich articles with body text
     enriched = scraper.enrich_all(releases)
+    missing = [str(r["id"]) for r in enriched if not r.get("body_text", "").strip()]
+    status.update(total_releases=len(enriched), failed_article_ids=missing)
+    if missing:
+        raise IncompleteRunError(f"Article extraction failed for {len(missing)} DPRCG releases; withholding full bulletin.")
 
     # Step 2: CGPSC Syllabus Classification & High-Yield Filtering
     classifier = CGPSCClassifier()
@@ -2275,6 +1986,8 @@ def run_dprcg_pipeline(target_date: Optional[date] = None, no_llm: bool = False)
 
     # Step 4: Semantic Clustering & LLM Synthesis with Gemini 3.8 Flash
     synthesized_articles = []
+    failed_topics = []
+    clusters = []
     if not no_llm and relevant_items:
         print("\n" + "=" * 70)
         print(f"  CLUSTERING & CLUBBING DPRCG RELEASES ({len(relevant_items)} Relevant Items)")
@@ -2293,6 +2006,15 @@ def run_dprcg_pipeline(target_date: Optional[date] = None, no_llm: bool = False)
         print("=" * 70)
         synthesizer = GeminiCurrentAffairsSynthesizer()
         synthesized_articles = synthesizer.synthesize_clusters(clusters)
+        failed_topics = synthesizer.failed_topics
+        status.update(expected_topics=len(clusters), completed_topics=len(synthesized_articles),
+                      failed_topics=failed_topics)
+        if len(synthesized_articles) != len(clusters) and not failed_topics:
+            raise IncompleteRunError("Synthesis topic coverage does not match the cluster count.")
+        if failed_topics:
+            master_docx_path = str(date_output_dir / f"{display_date}_PARTIAL.docx")
+            master_txt_path = str(date_output_dir / f"{display_date}_PARTIAL.txt")
+            display_date += f" - PARTIAL: {len(synthesized_articles)}/{len(clusters)} topics; see run_status.json for missing topics"
 
     # Step 5: Generate Master Output Files in Reverse-Engineered Reference Structure
     if synthesized_articles:
@@ -2309,7 +2031,18 @@ def run_dprcg_pipeline(target_date: Optional[date] = None, no_llm: bool = False)
     saved_excel = DPRCGDocumentBuilder.generate_excel(processed, excel_path)
     print(f"[+] Excel Summary Index: {saved_excel}")
 
-    print("\n[*] DPRCG Current Affairs Automation Complete.")
+    files = {"xlsx": saved_excel}
+    if saved_docx:
+        files.update(docx=saved_docx, txt=saved_txt)
+    if not all(path and Path(path).is_file() and Path(path).stat().st_size > 0 for path in files.values()):
+        raise IncompleteRunError("Required DPRCG artifacts were not generated.")
+    if failed_topics:
+        status.update(status="partial", files=files)
+        raise IncompleteRunError(f"DPRCG bulletin incomplete: {len(failed_topics)} topics failed. Partial artifacts are labelled PARTIAL.")
+    outcome = "index_only" if no_llm or not relevant_items else "complete"
+    status.update(status=outcome, files=files, expected_topics=len(clusters),
+                  completed_topics=len(synthesized_articles), failed_topics=[])
+    print(f"\n[*] DPRCG run status: {outcome}.")
     return saved_docx, saved_txt, saved_excel
 
 
@@ -2319,7 +2052,7 @@ def main():
         "--date",
         type=str,
         default=None,
-        help="Date to scrape in YYYY-MM-DD format (defaults to today with morning fallback)."
+        help="Date to scrape in YYYY-MM-DD format (defaults to today; no automatic fallback)."
     )
     parser.add_argument(
         "--no-llm",
@@ -2337,7 +2070,11 @@ def main():
             print(f"[Error] Invalid date format '{args.date}'. Expected YYYY-MM-DD.")
             sys.exit(1)
 
-    run_dprcg_pipeline(target_date=target_date, no_llm=args.no_llm)
+    try:
+        run_dprcg_pipeline(target_date=target_date, no_llm=args.no_llm)
+    except RuntimeError as exc:
+        logger.error("DPRCG run failed: %s", exc)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

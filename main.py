@@ -9,15 +9,24 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 
 # Reconfigure stdout for Windows terminal Unicode compatibility
-sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 from config import OUTPUT_DIR
 from pib_scraper import PIBScraper
 from upsc_classifier import UPSCClassifier
 from doc_builder import DocumentBuilder
+from run_status import RunStatus, NoReleasesError, IncompleteRunError
 
 
 def run_pipeline(target_date: date = None, open_files: bool = False):
+    target = target_date or date.today()
+    manifest = OUTPUT_DIR / f"PIB_UPSC_Daily_{target.isoformat()}_status.json"
+    with RunStatus(manifest, target) as status:
+        return _run_pipeline(target, open_files, status)
+
+
+def _run_pipeline(target_date, open_files, status):
     """Executes the complete scrape -> classify -> document build pipeline."""
     target = target_date if target_date else date.today()
     date_code = target.strftime("%Y-%m-%d")
@@ -30,33 +39,20 @@ def run_pipeline(target_date: date = None, open_files: bool = False):
     scraper = PIBScraper()
     releases, formatted_date = scraper.fetch_releases(target_date=target)
     
-    # Smart Morning Fallback:
-    # If checking today's releases and none are published yet (common before 11:00 AM IST),
-    # automatically fallback to yesterday's complete daily bulletin.
-    is_fallback = False
-    if not releases and target == date.today():
-        yesterday = target - timedelta(days=1)
-        print(f"[!] No releases found for today ({formatted_date}) yet.")
-        print(f"[*] Activating Smart Morning Fallback -> Compiling complete yesterday's bulletin ({yesterday.strftime('%d %B %Y')})...")
-        target = yesterday
-        date_code = target.strftime("%Y-%m-%d")
-        releases, formatted_date = scraper.fetch_releases(target_date=target)
-        is_fallback = True
-
     if not releases:
-        print(f"[!] No releases found for {formatted_date}.")
-        return None, None, None
+        raise NoReleasesError(f"No PIB releases published for {formatted_date}; no reports generated.")
 
     # 2. Read source articles before final relevance selection.
     releases = scraper.enrich_releases(releases)
+    missing = [r.get("prid") for r in releases if r.get("article_fetch_status") != "ok"]
+    status.update(total_releases=len(releases), failed_article_ids=missing)
+    if missing:
+        raise IncompleteRunError(f"Article extraction failed for {len(missing)} PIB releases; withholding full bulletin.")
     classifier = UPSCClassifier()
     enriched = classifier.process_all(releases)
     
     relevant_count = sum(1 for r in enriched if r.get("is_relevant"))
     print(f"[+] Total Releases: {len(enriched)} | UPSC Relevant: {relevant_count} | Routine Filtered: {len(enriched) - relevant_count}")
-    if is_fallback:
-        print(f"[*] Morning Bulletin: Prepared using yesterday's complete wrap-up ({date_code}).")
-
     # Mention all scraped PIB articles with their hyperlinked URLs separately
     relevant_items = [r for r in enriched if r.get("is_relevant")]
     routine_items = [r for r in enriched if not r.get("is_relevant")]
@@ -92,13 +88,18 @@ def run_pipeline(target_date: date = None, open_files: bool = False):
     docx_path = str(OUTPUT_DIR / docx_filename)
     email_html_path = str(OUTPUT_DIR / email_html_filename)
 
-    DocumentBuilder.generate_excel(enriched, excel_path, formatted_date)
-    DocumentBuilder.generate_docx(enriched, docx_path, formatted_date)
+    excel_path = DocumentBuilder.generate_excel(enriched, excel_path, formatted_date)
+    docx_path = DocumentBuilder.generate_docx(enriched, docx_path, formatted_date)
 
     from send_email import generate_email_html
     email_html_content = generate_email_html(enriched, date_code)
     with open(email_html_path, "w", encoding="utf-8") as f:
         f.write(email_html_content)
+
+    files = {"xlsx": excel_path, "docx": docx_path, "email_html": email_html_path}
+    if not all(Path(path).is_file() and Path(path).stat().st_size > 0 for path in files.values()):
+        raise IncompleteRunError("Required output artifacts were not generated.")
+    status.update(status="complete", files=files)
 
     print(f"[✓] Generated Excel: {excel_path}")
     print(f"[✓] Generated Word:       {docx_path}")
@@ -192,11 +193,13 @@ def main():
             target = datetime.strptime(args.date, "%Y-%m-%d").date()
         except ValueError:
             print("[!] Invalid date format. Use YYYY-MM-DD (e.g. 2026-10-04).")
-            return
-    
-    res = run_pipeline(target_date=target, open_files=args.open)
-    if not res or not res[0]:
-        return
+            sys.exit(2)
+
+    try:
+        res = run_pipeline(target_date=target, open_files=args.open)
+    except RuntimeError as exc:
+        print(f"[!] {exc}")
+        sys.exit(1)
     excel_path, docx_path, result_date_code, email_html_path, enriched = res
 
     # Export generated file paths to GitHub Actions output if running in a runner
@@ -204,17 +207,20 @@ def main():
     if github_output and docx_path and excel_path:
         try:
             with open(github_output, "a", encoding="utf-8") as gh_out:
+                gh_out.write("status=complete\n")
+                gh_out.write(f"manifest={OUTPUT_DIR / ('PIB_UPSC_Daily_' + result_date_code + '_status.json')}\n")
                 gh_out.write(f"docx={docx_path}\n")
                 gh_out.write(f"xlsx={excel_path}\n")
                 gh_out.write(f"date_code={result_date_code}\n")
                 gh_out.write(f"email_html={email_html_path}\n")
-        except Exception as e:
-            print(f"[!] Warning: Could not write to GITHUB_OUTPUT: {e}")
+        except OSError as exc:
+            raise RuntimeError("Could not publish current-run artifact paths to GitHub Actions.") from exc
 
     if (args.email or args.to) and (excel_path or docx_path):
         from send_email import send_daily_brief_email
         target_str = result_date_code if result_date_code else (target.strftime("%Y-%m-%d") if target else None)
-        send_daily_brief_email(target_date=target_str, to_override=args.to, releases=enriched)
+        if not send_daily_brief_email(target_date=target_str, to_override=args.to, releases=enriched):
+            sys.exit(1)
 
 
 if __name__ == "__main__":

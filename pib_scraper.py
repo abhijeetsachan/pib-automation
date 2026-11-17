@@ -7,6 +7,7 @@ from typing import List, Dict, Optional, Tuple
 from datetime import datetime, date
 import requests
 from bs4 import BeautifulSoup
+from run_status import FetchError, ParseError
 
 from config import (
     PIB_BASE_URL,
@@ -44,7 +45,7 @@ class PIBScraper:
                 logger.info("Waiting %d seconds before retrying...", sleep_time)
                 time.sleep(sleep_time)
 
-        raise RuntimeError(f"Failed to fetch {url} after {MAX_RETRIES} attempts.")
+        raise FetchError(f"Failed to fetch {url} after {MAX_RETRIES} attempts.")
 
     def fetch_releases(self, target_date: Optional[date] = None) -> Tuple[List[Dict], str]:
         """
@@ -69,16 +70,15 @@ class PIBScraper:
         # Step 2: If a past date is specified, trigger ASP.NET PostBack
         if not is_today:
             logger.info("Performing ASP.NET PostBack for date: day=%d, month=%d, year=%d", target.day, target.month, target.year)
-            viewstate_match = re.search(r'id="__VIEWSTATE"\s+value="([^"]+)"', html_content)
-            viewstate_gen_match = re.search(r'id="__VIEWSTATEGENERATOR"\s+value="([^"]+)"', html_content)
-            event_val_match = re.search(r'id="__EVENTVALIDATION"\s+value="([^"]+)"', html_content)
+            form = BeautifulSoup(html_content, "html.parser")
+            hidden = {tag.get("name") or tag.get("id"): tag.get("value", "")
+                      for tag in form.select('input[type="hidden"]')}
 
-            if not viewstate_match:
-                logger.error("Could not extract __VIEWSTATE from PIB response. Falling back to default response.")
+            if not hidden.get("__VIEWSTATE"):
+                raise ParseError("PIB ViewState missing; historical date cannot be requested safely.")
             else:
                 post_data = {
-                    "__VIEWSTATE": viewstate_match.group(1),
-                    "__VIEWSTATEGENERATOR": viewstate_gen_match.group(1) if viewstate_gen_match else "",
+                    **hidden,
                     "__EVENTTARGET": "ctl00$ContentPlaceHolder1$ddlday",
                     "__EVENTARGUMENT": "",
                     "ctl00$Bar1$ddlregion": "48",  # 48 = National (All India)
@@ -88,24 +88,31 @@ class PIBScraper:
                     "ctl00$ContentPlaceHolder1$ddlMonth": str(target.month),
                     "ctl00$ContentPlaceHolder1$ddlYear": str(target.year),
                 }
-                if event_val_match:
-                    post_data["__EVENTVALIDATION"] = event_val_match.group(1)
-
                 post_resp = self._request_with_retry("POST", PIB_ALL_REL_URL, data=post_data)
                 html_content = post_resp.text
 
+        self._verify_date(html_content, target)
         # Step 3: Parse releases from HTML
         releases = self._parse_releases(html_content)
         logger.info("Successfully extracted %d releases for %s", len(releases), formatted_date)
         return releases, formatted_date
+
+    @staticmethod
+    def _verify_date(html: str, target: date):
+        """Confirm server-selected filters rather than assuming PostBack worked."""
+        soup = BeautifulSoup(html, "html.parser")
+        for suffix, expected in (("ddlday", target.day), ("ddlMonth", target.month), ("ddlYear", target.year)):
+            control = soup.find("select", id=lambda value: bool(value and value.endswith(suffix)))
+            selected = control.find("option", selected=True) if control else None
+            if selected is None or str(selected.get("value", "")).lstrip("0") != str(expected):
+                raise ParseError(f"PIB response does not confirm requested date {target.isoformat()} ({suffix}).")
 
     def _parse_releases(self, html: str) -> List[Dict]:
         """Parses releases categorized by Ministry from the content-area div."""
         soup = BeautifulSoup(html, "html.parser")
         content_area = soup.find("div", class_="content-area")
         if not content_area:
-            logger.warning("Could not find div.content-area in PIB HTML response.")
-            return []
+            raise ParseError("PIB release container missing; cannot confirm an empty news day.")
 
         releases = []
         current_ministry = "Unknown Ministry"
@@ -136,6 +143,10 @@ class PIBScraper:
                             "direct_content_url": direct_content_url,
                         })
 
+        if not releases:
+            text = content_area.get_text(" ", strip=True).lower()
+            if not any(marker in text for marker in ("no release", "no press release", "no record", "no data")):
+                raise ParseError("PIB listing has no valid releases or explicit empty-day notice.")
         return releases
 
     def enrich_releases(self, releases: List[Dict]) -> List[Dict]:

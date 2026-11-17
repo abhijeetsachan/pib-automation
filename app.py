@@ -326,34 +326,15 @@ should_fetch = fetch_btn or ("enriched_releases" not in st.session_state) or (st
 
 if should_fetch:
     with st.spinner(f"Connecting to PIB portal for {selected_date.strftime('%d %B %Y')}..."):
-        scraper = PIBScraper()
-        releases, formatted_date = scraper.fetch_releases(target_date=selected_date)
-        
-        # Smart Morning Fallback: if checking today and none published yet, load yesterday's complete wrap-up
-        if not releases and selected_date == today_val:
-            yesterday_date = today_val - timedelta(days=1)
-            st.toast(f"ℹ️ PIB hasn't published today's releases yet. Loading yesterday's briefing ({yesterday_date.strftime('%d %B %Y')}).", icon="☕")
-            releases, formatted_date = scraper.fetch_releases(target_date=yesterday_date)
-            selected_date = yesterday_date
-
-        releases = scraper.enrich_releases(releases)
-        classifier = UPSCClassifier()
-        enriched = classifier.process_all(releases)
-        
-        # Build in-memory bytes for immediate, locked-file-free downloads
-        docx_bytes = DocumentBuilder.generate_docx_bytes(enriched, formatted_date)
-        excel_bytes = DocumentBuilder.generate_excel_bytes(enriched, formatted_date)
-
-        # Save to disk
-        date_code = selected_date.strftime("%Y-%m-%d")
-        excel_path = str(OUTPUT_DIR / f"PIB_UPSC_Daily_{date_code}.xlsx")
-        docx_path = str(OUTPUT_DIR / f"PIB_UPSC_Daily_{date_code}.docx")
-        
+        from main import run_pipeline
         try:
-            excel_path = DocumentBuilder.generate_excel(enriched, excel_path, formatted_date)
-            docx_path = DocumentBuilder.generate_docx(enriched, docx_path, formatted_date)
-        except Exception:
-            pass
+            excel_path, docx_path, date_code, email_html_path, enriched = run_pipeline(selected_date)
+            formatted_date = selected_date.strftime("%d %B %Y")
+            docx_bytes = Path(docx_path).read_bytes()
+            excel_bytes = Path(excel_path).read_bytes()
+        except (RuntimeError, OSError) as exc:
+            st.error(f"Briefing unavailable: {exc}")
+            st.stop()
 
         st.session_state["enriched_releases"] = enriched
         st.session_state["formatted_date"] = formatted_date
@@ -504,7 +485,7 @@ with st.expander("📧 Dispatch Brief via Email Directly from Dashboard", expand
     if send_click:
         with st.spinner("Connecting to Gmail SMTP and sending brief..."):
             try:
-                success = send_daily_brief_email(target_date=date_code, to_override=recipient_input)
+                success = send_daily_brief_email(target_date=date_code, to_override=recipient_input, releases=enriched)
                 if success:
                     st.success(f"✓ Briefing email successfully delivered to: **{recipient_input}**!")
                 else:
