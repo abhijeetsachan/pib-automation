@@ -47,7 +47,8 @@ def run_pipeline(target_date: date = None, open_files: bool = False):
         print(f"[!] No releases found for {formatted_date}.")
         return None, None, None
 
-    # 2. Classify
+    # 2. Read source articles before final relevance selection.
+    releases = scraper.enrich_releases(releases)
     classifier = UPSCClassifier()
     enriched = classifier.process_all(releases)
     

@@ -8,6 +8,7 @@ import os
 import logging
 from typing import Dict, List, Optional
 from config import UPSC_PAPERS, NOISE_PATTERNS
+from article_selection import has_substantive_evidence, weighted_matches
 
 logger = logging.getLogger(__name__)
 
@@ -42,62 +43,44 @@ class UPSCClassifier:
                 - tags (List[str])
                 - score (int: 1-10)
         """
-        combined_text = f"{headline} {ministry} {article_snippet}".lower()
+        # Ministry names support the fallback below, but are not subject evidence.
+        combined_text = f"{headline} {article_snippet}".lower()
         is_backgrounder = "backgrounder" in ministry.lower() or "backgrounder" in headline.lower()
+        paper_matches = {}
+        paper_scores = {}
+        specific_terms = []
+        for code, info in UPSC_PAPERS.items():
+            matches, specific, score = weighted_matches(headline, article_snippet, info["keywords"])
+            if specific:
+                paper_matches[code] = specific
+                paper_scores[code] = score
+                specific_terms.extend(specific)
 
-        # Substantive UPSC Overrides: Prevents real national/scientific/history news & PIB Backgrounders
-        # from being suppressed by superficial noise words (e.g. "PM congratulates ISRO" or "PM pays tribute")
-        substantive_patterns = [
-            # Space & Advanced Technology
-            r"\b(?:isro|gslv(?:-[a-z0-9]+)?|pslv(?:-[a-z0-9]+)?|sslv|nvs(?:-[0-9]+)?|navic|irnss|chandrayaan|gaganyaan|aditya-l1|satellite\s+launch|space\s+mission|spacecraft)\b",
-            # Modern History, Personalities & Commemorations
-            r"\b(?:sardar\s+(?:vallabhbhai\s+)?patel|rashtriya\s+ekta\s+diwas|national\s+unity\s+day|birth\s+anniversary|death\s+anniversary|punyatithi|freedom\s+fighter|mahatma\s+gandhi|b\.?r\.?\s+ambedkar|subhas\s+chandra\s+bose|bhagat\s+singh|tribal\s+pride\s+day|janjatiya\s+gaurav)\b",
-            # Internal Security, Policing & Gallantry
-            r"\b(?:dakshata\s+padak|kendriya\s+grihmantri\s+dakshata\s+padak|police\s+medal|gallantry\s+award|capfs?|cpos?|crpf|bsf|cisf|itbp|ssb|nsg)\b",
-            # Major Schemes & Infrastructure
-            r"\b(?:pmgsy(?:-[a-z0-9]+)?|pradhan\s+mantri\s+gram\s+sadak\s+yojana|rural\s+connectivity|social\s+security\s+coverage)\b",
-        ]
-        has_substantive_override = is_backgrounder or any(re.search(pat, combined_text, re.IGNORECASE) for pat in substantive_patterns)
-
-        # Step 1: Strict noise filtering (only if not protected by a substantive override)
-        if not has_substantive_override and self.is_noise(headline, combined_text):
+        # Ceremonial wording is a negative signal, not an unconditional veto.
+        # A named official, ministry, or institution alone cannot override it.
+        noisy = self.is_noise(headline)
+        substantive = has_substantive_evidence(combined_text, specific_terms)
+        if noisy and not (substantive or is_backgrounder):
             return {
                 "is_relevant": False,
                 "paper": "Routine/Ceremonial",
                 "paper_title": "Routine Announcements / Quotes / Sports / Protocol",
-                "relevance_reason": "Ceremonial announcement, quote sharing, greeting, or sports update with no direct syllabus overlap.",
+                "relevance_reason": "Ceremonial headline without a substantive policy, data, or research change.",
                 "tags": ["Filtered Noise"],
-                "score": 1
+                "score": 1,
             }
 
-        # Step 2: Strict word-boundary matching against UPSC taxonomy keywords
-        paper_matches = {}
-        for paper_code, paper_info in UPSC_PAPERS.items():
-            matched_kw = []
-            for kw in paper_info["keywords"]:
-                # Use regex \bword\b boundary to prevent partial substring false positives
-                # (e.g. preventing 'ed' matching 'shared' or 'hearted')
-                regex_pattern = r"\b" + re.escape(kw) + r"\b"
-                if re.search(regex_pattern, combined_text, re.IGNORECASE):
-                    matched_kw.append(kw)
-
-            if matched_kw:
-                paper_matches[paper_code] = matched_kw
-
-        # If keywords matched across papers, pick the paper with the highest match count
         if paper_matches:
-            best_paper = max(paper_matches.keys(), key=lambda p: len(paper_matches[p]))
+            best_paper = max(paper_scores, key=paper_scores.get)
             matched_keywords = paper_matches[best_paper]
-            relevance_score = min(10, 5 + len(matched_keywords) * 2)
-            tags = ["PIB Backgrounder"] + matched_keywords[:3] if is_backgrounder else matched_keywords[:4]
-
+            tags = (["PIB Backgrounder"] if is_backgrounder else []) + matched_keywords[:4]
             return {
                 "is_relevant": True,
                 "paper": best_paper,
                 "paper_title": UPSC_PAPERS[best_paper]["title"],
-                "relevance_reason": f"{'PIB Backgrounder: ' if is_backgrounder else ''}Aligned with {UPSC_PAPERS[best_paper]['title']} topics: {', '.join(matched_keywords[:3])}",
+                "relevance_reason": f"Aligned with {UPSC_PAPERS[best_paper]['title']} topics: {', '.join(matched_keywords[:3])}",
                 "tags": tags,
-                "score": relevance_score
+                "score": min(10, 5 + paper_scores[best_paper]),
             }
 
         # Guaranteed Relevance for PIB Backgrounders (In-depth policy overviews)
@@ -182,7 +165,7 @@ class UPSCClassifier:
             classification = self.classify_release(
                 headline=item.get("headline", ""),
                 ministry=item.get("ministry", ""),
-                article_snippet=""
+                article_snippet=item.get("body_text", "") or item.get("article_snippet", "") or item.get("summary", "")
             )
             enriched_item = {**item, **classification}
 

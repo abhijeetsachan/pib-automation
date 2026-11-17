@@ -138,7 +138,18 @@ class PIBScraper:
 
         return releases
 
-    def fetch_article_text(self, prid: str, max_chars: int = 1500) -> str:
+    def enrich_releases(self, releases: List[Dict]) -> List[Dict]:
+        """Attach source text before classification, preserving failed releases."""
+        enriched = []
+        for release in releases:
+            item = dict(release)
+            body = item.get("body_text", "") or self.fetch_article_text(item.get("prid", ""))
+            item["body_text"] = body
+            item["article_fetch_status"] = "ok" if body else "unavailable"
+            enriched.append(item)
+        return enriched
+
+    def fetch_article_text(self, prid: str, max_chars: Optional[int] = None) -> str:
         """
         Fetches the article text directly from the reader pane iframe (PressReleasePage.aspx).
         Bypasses the heavy JavaScript detail shell.
@@ -149,10 +160,14 @@ class PIBScraper:
         try:
             resp = self._request_with_retry("GET", url)
             soup = BeautifulSoup(resp.text, "html.parser")
-            paras = soup.find_all("p")
+            content = soup.select_one(".ReleaseLang, .innner-page-main-about-us, .release-content")
+            if content is None:
+                logger.warning("Article body container missing for PRID %s", prid)
+                return ""
+            paras = content.find_all(["p", "li", "tr"])
             clean_paras = [p.get_text(" ", strip=True) for p in paras if len(p.get_text(strip=True)) > 25]
             full_text = " ".join(clean_paras)
-            return full_text[:max_chars].strip()
+            return (full_text[:max_chars] if max_chars is not None else full_text).strip()
         except Exception as err:
             logger.warning("Error fetching article text for PRID %s: %s", prid, err)
             return ""

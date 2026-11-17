@@ -64,6 +64,8 @@ UPSC_PAPERS = {
             "welfare scheme", "vulnerable sections", "scheduled castes", "scheduled tribes", "women empowerment",
             "social security", "pension scheme", "epfo", "esic", "atal pension yojana", "labour code", "workers welfare",
             "pmgsy", "pmgsy-iv", "pradhan mantri gram sadak yojana", "rural connectivity", "rural road", "panchayati raj",
+            "scholarship", "scholarships", "schoolchildren", "education", "public health",
+            "healthcare", "nutrition", "literacy", "school education",
             "national health policy", "ayushman bharat", "national education policy", "poverty alleviation", "malnutrition",
             "bilateral treaty", "mou signed", "bilateral relations", "international summit",
             "g20", "asean", "quad", "brics", "shanghai cooperation", "unsc", "wto", "extradition",
@@ -123,6 +125,7 @@ UPSC_PAPERS = {
 
 # Negative noise patterns (routine ceremonies, quotes, poems, sports, condolences, protocol)
 NOISE_PATTERNS = [
+    r"\bcourtesy\s+(?:visit|meeting|call)\b",
     r"\bsubhashitam\b",
     r"\bshares\s+(?:sanskrit\s+)?(?:subhashitam|shloka|quote|poem|glimpses|pictures|video|thoughts|reflections|post)\b",
     r"\bshares\s+a\s+(?:poem|quote|message|glimpse)\b",

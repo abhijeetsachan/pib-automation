@@ -336,6 +336,7 @@ if should_fetch:
             releases, formatted_date = scraper.fetch_releases(target_date=yesterday_date)
             selected_date = yesterday_date
 
+        releases = scraper.enrich_releases(releases)
         classifier = UPSCClassifier()
         enriched = classifier.process_all(releases)
         

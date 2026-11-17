@@ -118,6 +118,24 @@ python main.py --daemon 21:00
 
 ## 🎯 UPSC Syllabus Alignment Framework
 
+Article selection reads PIB article bodies before classification in both the CLI
+and dashboard. Specific subjects in the headline receive more weight than body
+mentions; ministry names alone do not establish relevance. Ceremonial headlines
+can qualify when the source describes a concrete policy or research change.
+If an article body cannot be fetched, selection falls back to the headline and
+the release is marked with `article_fetch_status="unavailable"`. Reading each
+source adds network requests to a run.
+
+DPRCG selection uses original source titles and article bodies, with English and
+Hindi topic dictionaries. Generic official titles do not earn relevance points,
+and generated administrative labels are excluded from selection evidence.
+
+Run the offline selection regression checks with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
 | GS Paper | Focus Areas | PIB Target Themes |
 |---|---|---|
 | **GS-1** | Art, Culture, History, Geography, Society | Commemorations, freedom struggle icons, archaeological excavations, monuments, monsoons, cyclones, earthquakes, tribal culture. |
